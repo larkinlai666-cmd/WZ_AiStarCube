@@ -1,4 +1,4 @@
-# WZ_Skill
+﻿# WZ_Skill
 
 **WezTerm（wz）通用 Agent Skill 项目**：强化 AI Agent 在 WezTerm / **AI STAR CUBE** 工作台上的交互体验与效率。
 
