@@ -14,38 +14,41 @@
 - Capsule: CONTEXT.md
 - Coverage: CONTEXT.md
 - Blockers: none
-- Next: Draft `skills/wz-skill` (or final skill name) SKILL.md from recovered WezTerm/AI STAR CUBE requirements; keep PPS only as process discipline.
-- Updated: 2026-08-07T04:40:00Z
+- Next: Workbench gaps vs acceptance checklist; keep init panel listing WZ_Skill sessions (bootstrap filter fixed). Skill packaging still deferred (D-002).
+- Updated: 2026-08-08T09:00:00Z
 - Device: SK-20240507HWFH
 
 ## Objective
 
-Build a **general-purpose Agent Skill for WezTerm (wz)** that strongly improves AI-agent workflow interaction and productivity inside WezTerm—especially for tools without a desktop client (Grok, Codex, etc.). The skill encodes how agents should use the **AI STAR CUBE** workbench model (layouts, keys, WS/DESK task model, conflict rules) so sessions stay efficient and consistent across machines.
+Build **WZ-AiWorkBench**: a personal AI workbench product centered on WezTerm / **AI STAR CUBE**, strong enough for daily agent workflows (Grok, Codex, etc.). **First** finish the live workbench to the author’s satisfaction; **then** encapsulate behavior as one or more skills and related engineering modules under the WZ-AiWorkBench name.
 
-This repository is the **WZ product project**. It is **not** a fork of PPS. PPS is only the external working protocol (bounded resume, authority IDs, worksets, close gates).
+This repository is the **WZ-AiWorkBench product project**. It is **not** a fork of PPS. PPS is only the external working protocol (bounded resume, authority IDs, worksets, close gates).
 
 ## Scope
 
-- In scope:
-  - Recover and freeze morning WezTerm / AI STAR CUBE requirements as project facts and decisions.
-  - Author distributable skill(s) under `skills/` for Grok/Codex-style agents.
-  - Document how the skill maps to local WezTerm config (`~/.config/wezterm`) without owning that config tree as product source.
-  - Use PPS scripts only for project state lifecycle (resume / validate / close).
+- In scope (current phase · D-002):
+  - Iterate live workbench under `%USERPROFILE%\.config\wezterm\` (and project helpers like `open-project.ps1`).
+  - Keep requirements, decisions, and behavior contracts in this repo (`docs/MAIN.md`, authority, refs).
+  - Record residual gaps until the author accepts the workbench.
+- In scope (later packaging phase):
+  - Author distributable skill(s) / modules under the **WZ-AiWorkBench** family.
+  - Optional portable defaults, install/sync logic.
 - Out of scope:
   - Replacing or vendoring the PPS protocol product (`G:\GrokProject\PPS_SKILL`).
   - Building a multi-user team orchestration platform.
-  - Turning this repo into a second copy of the PPS skill source tree.
+  - Treating skill packaging as the critical path before workbench acceptance.
 
 ## Milestones
 
 - [x] Separate product root from PPS toolset clone.
 - [x] Bootstrap this repo with PPS process files only.
 - [x] Capture morning WZ requirements into authority + main doc.
-- [ ] Approve skill name and first package scope.
-- [ ] Ship first reviewable `SKILL.md` + references.
-- [ ] Validate skill against real WezTerm session flows (F6/F7/F8/F9, Leader, WS/DESK).
-- [ ] L3 audit and freeze v0.1 skill bundle.
+- [x] Approve product family name **WZ-AiWorkBench** and workbench-first policy.
+- [ ] Author accepts workbench (“done enough”) against explicit checklist.
+- [ ] (Later) Ship WZ-AiWorkBench skill family + references.
+- [ ] (Later) Validate against real WezTerm session flows (F6/F7/F8/F9, Leader, WS/DESK).
+- [ ] (Later) L3 audit and freeze v0.1 bundle.
 
 ## Resume Note
 
-Start with `scripts/resume_packet.*`, then follow only the exact authority, component, asset IDs, and paths in `CONTEXT.md`. Git history and required asset materialization are separate readiness states. Process skill source (if needed): `G:\GrokProject\PPS_SKILL\skills\pps-skill` — do not merge its product goals into this project.
+Start with `scripts/resume_packet.*`, then follow only the exact authority, component, asset IDs, and paths in `CONTEXT.md`. Git history and required asset materialization are separate readiness states. Process skill source (if needed): `G:\GrokProject\PPS_SKILL\skills\pps-skill` — do not merge its product goals into this project. Current critical path is **workbench UX**, not skill authoring.

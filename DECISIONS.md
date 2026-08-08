@@ -11,6 +11,9 @@
 - `F-003`
 - `F-004`
 - `F-005`
+- `F-006`
+- `D-001`
+- `D-002`
 <!-- PPS:ACTIVE:END -->
 
 ## Authority Records
@@ -79,15 +82,41 @@
 - Supersedes: none.
 - Affects: launch scripts, skill troubleshooting.
 
+### F-006 [active]
+
+- Summary: Left Explorer (F7) and the focused AI conversation must share the same task root. DESK for Explorer is resolved from focused Grok/Codex pane cwd (`--cwd`) and/or per-tab desk before falling back to window workspace map. Sidebar entries expose clickable file/folder links that open with the OS default application.
+- Source: User workbench requirement 2026-08-07 (screenshot: WS:home/DESK:profile vs Grok top bar WZ_Skill).
+- Scope: Live WezTerm workbench (`desk.lua`, `projects.open_sidebar`, `sidebar.ps1`, mouse hyperlinks).
+- Supersedes: F7 only reading window-level `home` desk without AI pane sync.
+- Affects: C-WB behavior, status HUD, open-project.ps1 desk-roots write, MAIN backlog.
+
+### D-001 [active]
+
+- Summary: Product / workflow family name is **WZ-AiWorkBench**. Final form may comprise multiple skills and/or other engineering modules; do not treat a single `wz-skill` package as the product ceiling.
+- Source: User decision 2026-08-07.
+- Scope: Naming, packaging roadmap, skill frontmatter later, docs titles.
+- Supersedes: informal placeholder name `wz-skill` as product identity (path may remain temporary scaffold only).
+- Affects: MAIN, PROJECT_STATE, skill naming when packaging starts, README.
+
+### D-002 [active]
+
+- Summary: **Workbench-first.** Current core focus is iterating the live AI STAR CUBE / WezTerm workbench until it fully meets personal requirements. Skill encapsulation and multi-skill packaging are deferred until the workbench is accepted as “done enough.” Do not prioritize authoring distributable `SKILL.md` over workbench UX/features.
+- Source: User decision 2026-08-07.
+- Scope: All packages until user re-opens packaging phase.
+- Supersedes: PKG-001 emphasis on shipping reviewable skill body as immediate Next.
+- Affects: Stage interpretation, package goals, Write/Verify targets, agent task selection.
+
 ## Status Events
 
 - 2026-08-07: Initialized `M-001` and `M-002` as active project method constraints.
 - 2026-08-07: Separated product root from PPS clone; added `M-003`, `F-001`–`F-005` from recovered morning work and user protocol clarification.
+- 2026-08-07: User approved `D-001` (name WZ-AiWorkBench) and `D-002` (workbench-first; skill packaging deferred).
+- 2026-08-07: Added `F-006` — Explorer/AI task-root sync + clickable default-open in sidebar.
 
 ## Next ID Hints
 
 - Method: `M-004`
-- Fact: `F-006`
-- Decision: `D-001`
+- Fact: `F-007`
+- Decision: `D-003`
 
 These hints are conveniences, not authority. Search before allocating an ID.

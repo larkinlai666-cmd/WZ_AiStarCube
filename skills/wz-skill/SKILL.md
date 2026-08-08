@@ -1,11 +1,15 @@
-﻿---
+---
 name: wz-skill
 description: >
-  Placeholder. Full skill body pending PKG-001. WezTerm / AI STAR CUBE agent skill.
-  Triggers: wezterm, wez, wz, AI STAR CUBE, 工作台快捷键. Use when building or using WZ skill.
+  Placeholder only. Product family is WZ-AiWorkBench. Skill packaging is deferred
+  until the live WezTerm / AI STAR CUBE workbench is accepted (D-001, D-002).
+  Do not treat this file as the current deliverable.
 ---
 
-# wz-skill (draft scaffold)
+# WZ-AiWorkBench — skill placeholder (not active deliverable)
 
-See `docs/MAIN.md` in the WZ_Skill project for recovered requirements.
-This file will be replaced with executable agent instructions after skill name confirmation.
+- **Product name:** WZ-AiWorkBench (may become multiple skills later).
+- **Current phase:** workbench-first. Iterate `%USERPROFILE%\.config\wezterm\`, not this file.
+- **Authority:** see repo `docs/MAIN.md`, `DECISIONS.md` (`D-001`, `D-002`).
+
+When packaging re-opens, replace this scaffold with real agent instructions and rename/restructure under the WZ-AiWorkBench family.

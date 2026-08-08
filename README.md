@@ -1,13 +1,22 @@
-﻿# WZ_Skill
+# WZ-AiWorkBench
 
-**WezTerm（wz）通用 Agent Skill 项目**：强化 AI Agent 在 WezTerm / **AI STAR CUBE** 工作台上的交互体验与效率。
+**WezTerm 上的个人 AI 工作台产品线（AI STAR CUBE）**。仓库工程名目录可为 `WZ_Skill`；产品族名是 **WZ-AiWorkBench**。
+
+## 当前阶段（重要）
+
+**先把工作台做到自己满意，再封装 Skill。**
+
+| 阶段 | 做什么 |
+|---|---|
+| **现在** | 迭代本机 `%USERPROFILE%\.config\wezterm\` 工作台 + 仓内启动/状态文档 |
+| **以后** | 封装为 WZ-AiWorkBench 下的一个或多个 skill / 其它工程逻辑 |
 
 ## 和 PPS 的关系（请先读）
 
 **PPS 不是本产品的功能模块，也不是本仓要开发的内容。**
 
 - PPS = 个人项目推进用的 **工作协议 + 脚本工具集**（有界恢复、权威 ID、工作集、收口验证）。
-- 本仓 = **WZ Skill 产品**（WezTerm / AI 工作台 skill）。
+- 本仓 = **WZ-AiWorkBench** 产品工程。
 - 两者 **内容不覆盖**；这里只是 **按 PPS 的工作逻辑** 管理状态（`PROJECT_STATE.md`、`DECISIONS.md`、`CONTEXT.md` 等）。
 - PPS 工具集独立目录：`G:\GrokProject\PPS_SKILL`（需要升级协议时去那边，不要把 PPS 源码合进本仓当功能）。
 
@@ -18,9 +27,10 @@
 | `PROJECT_STATE.md` | 热状态 / 下一动作 |
 | `CONTEXT.md` | 当前工作集（Read/Write/Verify） |
 | `DECISIONS.md` | 生效权威 `M/F/D` |
-| `docs/MAIN.md` | 当前主产物（需求与 skill 规格） |
-| `PROJECT_MAP.md` | 组件导航 |
-| `open-project.ps1` | 用正确 cwd 打开 Grok |
+| `docs/MAIN.md` | 当前主产物（需求、阶段、工作台契约） |
+| `PROJECT_MAP.md` | 组件导航（含外部 C-WB） |
+| `open-project.ps1` | 用正确 cwd 在 WezTerm **页签** 中打开 Grok |
+| Live workbench | `%USERPROFILE%\.config\wezterm\` |
 
 ## 用正确根目录打开 Grok
 
@@ -35,6 +45,8 @@ powershell -ExecutionPolicy Bypass -File G:\GrokProject\WZ_Skill\open-project.ps
 ```powershell
 grok --cwd G:\GrokProject\WZ_Skill
 ```
+
+优先在已有 WezTerm 窗口里开 **页签**，避免 `Start-Process grok` 叠独立 OS 窗。
 
 ## 恢复工作（PPS 逻辑）
 

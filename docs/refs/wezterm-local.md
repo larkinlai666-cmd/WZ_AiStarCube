@@ -1,6 +1,6 @@
-# Live WezTerm config (external reference)
+# Live WezTerm config (external · primary implementation in workbench phase)
 
-Not part of this product git tree. Morning AI STAR CUBE work lives here:
+Not part of this product git tree. **AI STAR CUBE / WZ-AiWorkBench** runtime lives here:
 
 ```
 %USERPROFILE%\.config\wezterm\
@@ -9,4 +9,4 @@ Not part of this product git tree. Morning AI STAR CUBE work lives here:
   workbench\   # keys, status, projects, desk, sidebar, help, cheatsheet, …
 ```
 
-Skill docs should cite this path; do not copy the whole config into WZ_Skill unless packaging an optional install asset later.
+Workbench-phase edits target this tree (component `C-WB`). Project docs should stay aligned with its README/cheatsheet. Do not bulk-copy the whole config into the git repo unless a later decision introduces portable assets / packaging.
