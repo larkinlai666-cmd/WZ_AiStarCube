@@ -41,6 +41,28 @@
 - **F-007** 门禁 R1–R6  
 - **F-008** 新建向导冻结路径  
 
+## 事故修复（2026-08-09）
+
+- **现象**：重启 WezTerm → `attempt to yield across a C-call boundary` → 整份配置失败，界面像「出厂默认」（Init/F6–F9 全无）。
+- **根因**：`launch.lua` 在 **config load / require** 时调用 `wezterm.run_child_process("where grok")`。
+- **修复**：仅用 `io.open` + `PATH` 环境变量解析 `grok.exe`；**禁止**在加载期 spawn。
+- **数据**：`desk-roots.tsv` / sessions / workbench 模块均未丢失，只是加载失败导致未生效。
+- **防回归**：见 `docs/CONFIG_LOAD_SAFETY.md` + `scripts/wezterm_load_guard.ps1`；`wezterm.lua` soft-require。
+
+## 三方对照（本机 live / 仓工作区 / GitHub origin）
+
+分析命令：`scripts/wezterm_load_guard.ps1` + hash 对比 live ↔ `live-workbench/`。
+
+| | 本机 `~/.config/wezterm` | 仓 `live-workbench/` 工作区 | GitHub `origin/main` |
+|--|--------------------------|----------------------------|----------------------|
+| 主 Lua 模块 hash | 与左栏一致（已对齐） | 与本机一致 | **落后**：仍含加载期 `where.exe` |
+| 启动 yield 炸弹 | 已消除 | 已消除（未提交则 push 前无效） | **仍存在** → 第三方 Install 会炸 |
+| 门禁 R1–R6 / Init | 有 | 有 | 有（同 HEAD 快照） |
+| 个人 desk-roots | 真实路径 | 仅 example | 仅 example |
+| 路径槽策略 | 动态全量 + Peach 色（STATUS_GEN） | 同左 | 同已提交快照 |
+
+**对抗性结论：** 「本机能用」≠「线上安全」。公开仓在修复 **commit + push** 前，任何 `git clone` + `Install-WZ.ps1` 都会装回事故版。
+
 ## 明确未完成
 
 - [ ] 作者「工作台达标」验收清单全过  

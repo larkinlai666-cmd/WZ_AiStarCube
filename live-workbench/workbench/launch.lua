@@ -7,29 +7,44 @@ local home = wezterm.home_dir
 M.home = home
 M.powershell = { "powershell.exe", "-NoLogo" }
 
---- Resolve grok.exe portably (PATH first, then common install locations)
+--- True if path is readable (no subprocess — safe at config load)
+local function file_exists(p)
+  if not p or p == "" then
+    return false
+  end
+  local f = io.open(p, "r")
+  if f then
+    f:close()
+    return true
+  end
+  return false
+end
+
+--- Resolve grok.exe portably.
+--- MUST NOT call wezterm.run_child_process here: this runs at require() during
+--- config evaluation; child process yield → "attempt to yield across a C-call
+--- boundary" and WezTerm falls back to a blank default config (lost workbench).
 local function resolve_grok_exe()
   local candidates = {
     home .. "\\.grok\\bin\\grok.exe",
   }
-  local ok, stdout = wezterm.run_child_process({ "where.exe", "grok" })
-  if ok and stdout and tostring(stdout) ~= "" then
-    local first = tostring(stdout):match("([^\r\n]+)")
-    if first and #first > 0 then
-      table.insert(candidates, 1, first)
-    end
-  end
   local la = os.getenv("LOCALAPPDATA")
   if la and la ~= "" then
     table.insert(candidates, la .. "\\Programs\\grok\\grok.exe")
+    table.insert(candidates, la .. "\\grok\\bin\\grok.exe")
+  end
+  -- Scan PATH dirs for grok.exe / grok.cmd (pure env + io; no where.exe)
+  local path_env = os.getenv("PATH") or os.getenv("Path") or ""
+  for dir in path_env:gmatch("[^;]+") do
+    dir = tostring(dir):gsub("^%s+", ""):gsub("%s+$", ""):gsub("[/\\]+$", "")
+    if dir ~= "" then
+      table.insert(candidates, dir .. "\\grok.exe")
+      table.insert(candidates, dir .. "\\grok.cmd")
+    end
   end
   for _, p in ipairs(candidates) do
-    if p and p ~= "" then
-      local f = io.open(p, "r")
-      if f then
-        f:close()
-        return p
-      end
+    if file_exists(p) then
+      return p
     end
   end
   -- fallback path (error messages still make sense)

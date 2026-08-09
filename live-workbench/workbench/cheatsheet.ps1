@@ -31,7 +31,7 @@ if (Test-Path -LiteralPath $sheet) {
 }
 
 Write-Host ""
-Write-Host "  [q] close panel   [F4] close pane   [F8] or Alt+; h toggle" -ForegroundColor DarkCyan
+Write-Host "  [q] close panel   [F4] close pane   [F8] or Alt+z h toggle" -ForegroundColor DarkCyan
 Write-Host ""
 
 while ($true) {

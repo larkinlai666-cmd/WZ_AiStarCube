@@ -1,5 +1,5 @@
 ﻿# AI STAR CUBE Explorer — bound to task workspace (WS) + desk root (DESK)
-# Open: F7  or  Leader Alt+; then e  (window-local; not system-global)
+# Open: F7  or  Leader Alt+z then e  (window-local; not system-global)
 
 
 param(
@@ -928,7 +928,7 @@ while ($running) {
 
   if ($low -eq 'q' -or $low -eq 'quit' -or $low -eq 'exit') {
     Stop-FsWatch
-    Write-Host '  Quit. Close pane: F4  (or Alt+; then x)' -ForegroundColor DarkGray
+    Write-Host '  Quit. Close pane: F4  (or Alt+z then x)' -ForegroundColor DarkGray
     $running = $false
     break
   }

@@ -14,8 +14,8 @@
 - Capsule: CONTEXT.md
 - Coverage: CONTEXT.md
 - Blockers: none
-- Next: Third-party install smoke (fresh Windows + Install-WZ.ps1). Acceptance checklist. Skill packaging deferred (D-002).
-- Updated: 2026-08-09T07:30:00Z
+- Next: User approve MAIN acceptance checklist; live smoke A1–C4 after Ctrl+F5. Skill packaging deferred (D-002).
+- Updated: 2026-08-09T08:15:00Z
 - Device: SK-20240507HWFH
 
 ## Objective
@@ -44,9 +44,11 @@ This repository is the **WZ-AiWorkBench product project**. It is **not** a fork 
 - [x] Bootstrap this repo with PPS process files only.
 - [x] Capture morning WZ requirements into authority + main doc.
 - [x] Approve product family name **WZ-AiWorkBench** and workbench-first policy.
-- [ ] Author accepts workbench (“done enough”) against explicit checklist.
+- [x] Draft workbench acceptance checklist (MAIN; pending user D).
+- [x] Align Leader contract to Alt+z (F-004 + live docs/snapshot).
+- [ ] Author approves checklist + live session smoke A1–C4.
+- [ ] Author accepts workbench (“done enough”) against checklist.
 - [ ] (Later) Ship WZ-AiWorkBench skill family + references.
-- [ ] (Later) Validate against real WezTerm session flows (F6/F7/F8/F9, Leader, WS/DESK).
 - [ ] (Later) L3 audit and freeze v0.1 bundle.
 
 ## Resume Note

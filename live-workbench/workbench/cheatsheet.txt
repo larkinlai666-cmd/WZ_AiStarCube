@@ -20,11 +20,11 @@
   3 页签  「项目名 · 工具」动态长度；选中亮蓝 / 未选中深灰淡字
   关顶栏 Alt+z Shift+H · 重载 Ctrl+F5
 【项目区怎么选 / 怎么切换 · 就记这 3 步】
-  1) 选项目开新页签:  按 F9（或 Alt+; 再按 .）→ 顶部应并排多页签
+  1) 选项目开新页签:  按 F9（或 Alt+z 再按 .）→ 顶部应并排多页签
        → 弹出列表 → ↑↓ 选 → Enter
        → 状态栏 WS/DESK 变成该项目
   2) 在「已打开」的任务区之间跳:
-       Alt+; 再按 j  → 工作区列表 → Enter
+       Alt+z 再按 j  → 工作区列表 → Enter
   3) 进项目后开 AI:  F6=三栏对话桌
   4) 侧栏必须与对话同根:  先点 Grok 窗格，再按 F7
        → Explorer 的 DESK = Grok 顶栏 --cwd（严格对应）
@@ -35,7 +35,7 @@
     [收藏] = favorites.txt
     [固定] = Home/Desktop/…
     扫描… = 临时扫 Desktop/Documents 更多文件夹
-    跳转… = 等同 Alt+; j
+    跳转… = 等同 Alt+z j
 
 【一键直达 · 无修饰键（已避冲突）】
   F3   接回面板：最近项目 / 继续对话 / Dashboard（重启后用这个）
@@ -123,18 +123,19 @@
   F1        曾考虑速查    系统 Help 常吞键             不绑
   F2        曾绑 Explorer Grok 设置被抢走              不绑 → 交 Grok
   F3        曾绑项目      资源管理器「搜索」肌肉记忆   改 F9
-  Ctrl+;    曾做 Leader   与 Grok 队列冲突             改 Alt+;
+  Ctrl+;    曾做 Leader   与 Grok 队列冲突             改 Alt+z
+  Alt+;     曾做 Leader   中文 IME 常无 LEADER         改 Alt+z（旧键仅兼容少量）
   F4/F6/F8  保留          仅 WezTerm 聚焦时生效        保留
   F7/F9     新核心        系统占用少                   采用
 
 【故障】
   键无反应 → 先点 WezTerm 窗口标题栏确认聚焦；笔记本试 Fn+Fx
-  Alt+; 无 LEADER → 用左侧 Alt；输入法下分号用英文标点
-  改配置后 → Alt+; 再按 ' 重载
+  Leader 无闪现 → 用 **Alt+z**（左 Alt）；勿依赖 Alt+;
+  改配置后 → Ctrl+F5 或 Alt+z 再 ' 重载
 
 完整文档:  %USERPROFILE%\.config\wezterm\README.md
 ═══════════════════════════════════════════════════════════
-  面板内 q 退出 · 或 F4 / Alt+; x 关窗格
+  面板内 q 退出 · 或 F4 / Alt+z x 关窗格
 ═══════════════════════════════════════════════════════════
 
   [Init] c=NEW TASK WIZARD (name+folder+bind)  Enter=resume  n=new-in-project

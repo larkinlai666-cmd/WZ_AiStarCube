@@ -9,7 +9,7 @@
 - Assets: none
 - Components: C-ROOT, C-WB, C-REF-WEZ, C-SKILL, C-LAUNCH
 - Read: PROJECT_STATE.md,CONTEXT.md,DECISIONS.md,docs/MAIN.md,docs/refs/wezterm-local.md
-- Write: PROJECT_STATE.md,CONTEXT.md,DECISIONS.md,docs/MAIN.md
+- Write: PROJECT_STATE.md,CONTEXT.md,DECISIONS.md,docs/MAIN.md,README.md,live-workbench
 - Verify: powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1
 - Excluded: none
 - Coverage: CONTEXT.md
@@ -17,53 +17,52 @@
 ## Current Package
 
 - ID: PKG-001
-- Goal: Gates + project-name freeze (D-003/F-007/F-008); keep workbench-first; skill packaging deferred.
+- Goal: Acceptance checklist ready; Leader Alt+z aligned; skill deferred.
 - Output anchor: `docs/MAIN.md` + live `~\.config\wezterm\workbench\*`
-- Allowed change: Live workbench gates/create-flow; docs/authority; open-project.ps1.
-- Forbidden change: PPS product import; shipping skill as current deliverable.
+- Allowed change: Live UX/docs sync; authority; open-project; installer docs.
+- Forbidden change: PPS product import; shipping skill now.
 
 ## Pending Feedback
 
-- Concrete workbench “done” checklist (gaps vs current AI STAR CUBE).
-- Next edits only under live `~\.config\wezterm` vs also version modules in-repo.
+- Approve/edit MAIN acceptance checklist (draft → D).
+- Live smoke A1–C4 after `Ctrl+F5`.
 
 ## Proposals
 
-- P-004: PKG-002 = workbench gaps only; patch live config; session-verify F6–F9 / tabs / WS-DESK.
-- P-005: Keep `skills/wz-skill/` frozen placeholder until packaging; restructure under WZ-AiWorkBench then.
-- P-003: Optional portable `assets/` still post-workbench.
+- P-006: MAIN acceptance checklist — user approve as D.
+- P-004: PKG-002 residual UX after checklist.
+- P-005: Freeze `skills/wz-skill/` until packaging.
 
 ## Working Assumptions
 
-- H-002: PPS toolset at `G:\GrokProject\PPS_SKILL`; project `scripts/` for lifecycle.
-- H-003: Live implementation stays external at `~\.config\wezterm` until a later D brings modules into git.
+- H-002: PPS at `G:\GrokProject\PPS_SKILL`; project `scripts/` lifecycle.
+- H-003: Live `~\.config\wezterm`; keep `live-workbench/` in sync.
 
 ## Current Risks
 
-- Historical home-cwd sessions remain on disk (hidden unless Init `a`); do not resume as formal TASK.
-- Live config vs docs drift if gates change only on one side.
-- No explicit acceptance list → workbench phase cannot close.
+- Home-cwd history not formal TASK.
+- Unapproved checklist blocks workbench close.
 
 ## Constraint Coverage
 
-| ID | Constraint | Artifact / section | Result |
-|---|---|---|---|
-| M-001 | Stable IDs + workset | `CONTEXT.md` Manifest | Present |
-| M-002 | Close after verify | `AGENTS.md` | Present |
-| M-003 | PPS process-only | `docs/MAIN.md` | Present |
-| F-001 | AI workbench product | `docs/MAIN.md` | Present |
-| F-002 | Live config external | `docs/refs/wezterm-local.md` | Present |
-| F-003 | Key principles | `docs/MAIN.md` principles | Present |
-| F-004 | WS/DESK + F6–F9 | `docs/MAIN.md` key map | Present |
-| F-005 | Session `--cwd` | `open-project.ps1` | Present |
-| F-006 | Explorer↔AI same DESK + click open | live `desk.lua` / `sidebar.ps1` | Present |
-| F-007 | Hard gates R1–R6 + project name def | live `desk.lua` / `bootstrap.ps1` | Present |
-| F-008 | Create flow freezes path | Init wizard `c` + `.wz-project` | Present |
-| F-009 | Third-party Install-WZ.ps1 | `Install-WZ.ps1` + PORTABILITY | Present |
-| D-001 | Name WZ-AiWorkBench | `docs/MAIN.md` Naming | Present |
-| D-002 | Workbench-first | `docs/MAIN.md` Phase policy | Present |
-| D-003 | Project name/path freeze | `DECISIONS.md` + desk-roots | Present |
+| ID | Artifact / section | Result |
+|---|---|---|
+| M-001 | `CONTEXT.md` Manifest | Present |
+| M-002 | `AGENTS.md` | Present |
+| M-003 | `docs/MAIN.md` | Present |
+| F-001 | `docs/MAIN.md` | Present |
+| F-002 | `docs/refs/wezterm-local.md` | Present |
+| F-003 | `docs/MAIN.md` principles | Present |
+| F-004 | MAIN key map + `keys.lua` Alt+z | Present |
+| F-005 | `open-project.ps1` | Present |
+| F-006 | live desk/sidebar | Present |
+| F-007 | live desk/bootstrap | Present |
+| F-008 | Init wizard `c` | Present |
+| F-009 | Install-WZ + PORTABILITY | Present |
+| D-001 | MAIN Naming | Present |
+| D-002 | MAIN Phase policy | Present |
+| D-003 | DECISIONS + desk-roots | Present |
 
 ## Next Action
 
-Third party: `git clone` + `Install-WZ.ps1` + DoctorOnly green + Init/F9 smoke. Author: keep live workbench in sync with `live-workbench/` on each gate change.
+User approve MAIN checklist (「清单定了」) → live smoke A1–C4. Packaging deferred (D-002).

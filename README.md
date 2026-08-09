@@ -46,7 +46,7 @@ live-workbench/          ← 可安装的 WezTerm 配置快照
     projects.lua         F9 选项目、F7 Explorer
     status.lua           左侧路径槽 + 页签标题
     layouts.lua          F6 三栏 AI 桌
-    keys.lua             键位（F6–F9, Leader Alt+;）
+    keys.lua             键位（F6–F9, Leader Alt+z）
     sidebar.ps1          左侧文件树
     launch.lua / resume.lua / options.lua / …
   INSTALL.md
@@ -78,6 +78,7 @@ live-workbench/          ← 可安装的 WezTerm 配置快照
 | **F7** | 左侧 Explorer，绑当前任务根 |
 | **F8** | 速查 |
 | **Init** | 冷启动/新标签默认任务表：续聊 / `c` 新建 / `n` 同项目新会话 |
+| **Leader** | **`Alt+z`** 再小写（勿用旧 `Alt+;`；中文 IME 下常无效） |
 | 路径槽 | Wez 左侧全路径展示（与 Grok 顶栏应对齐） |
 
 ### 4. 工程侧

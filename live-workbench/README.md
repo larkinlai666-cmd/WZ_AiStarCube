@@ -95,7 +95,7 @@ powershell -NoLogo -NoExit -ExecutionPolicy Bypass -File $env:USERPROFILE\.confi
 |------|------|
 | 是不是系统全局热键？ | **不是。** WezTerm 绑定只在 **本窗口聚焦** 时生效，不会 `RegisterHotKey` 抢全桌面。 |
 | 切到浏览器 / 资源管理器时？ | F7/F9/F6 等 **不会触发** 工作台动作；各软件用自己的键。 |
-| 如何减少冲突？ | ① 窗口级绑定（已满足）② 不绑系统/Grok 常用键 ③ Leader 用 `Alt+;` 而非 `Ctrl+;` |
+| 如何减少冲突？ | ① 窗口级绑定（已满足）② 不绑系统/Grok 常用键 ③ Leader 用 **`Alt+z`**（勿用 `Ctrl+;` / 勿依赖旧 `Alt+;`） |
 | 未绑定的键去哪？ | **原样进入终端**（例如 **F2 → Grok 设置**） |
 
 详细审计表见下方「冲突审计」。
@@ -123,7 +123,7 @@ powershell -NoLogo -NoExit -ExecutionPolicy Bypass -File $env:USERPROFILE\.confi
 
 - 设计目的：多标签多项目时，一眼看到 **当前页签** 在干什么（以前误绑整窗 Workspace，三个标签显示同一个错名字）。
 - 不能点击（WezTerm 状态栏限制）；动作用 **F9** 开项目、**F7** 侧栏。
-- **不想看可以关**：`Alt+;` 然后 `Shift+H` 切换显示；关掉后只剩 ★ 与右侧信息。
+- **不想看可以关**：`Alt+z` 然后 `Shift+H` 切换显示；关掉后只剩 ★ 与右侧信息。
 
 绑定表：`workbench\desk-roots.tsv`。项目身份文件：`<项目根>\.wz-project`。
 
@@ -143,14 +143,14 @@ powershell -NoLogo -NoExit -ExecutionPolicy Bypass -File $env:USERPROFILE\.confi
 
 | 你想做什么 | 按什么 | 你会看到什么 |
 |------------|--------|----------------|
-| **选一个项目并进入** | **`F9`**（备用：`Alt+;` 再 `.`） | 弹出列表 → ↑↓ → **Enter** → 状态栏 `WS:`/`DESK:` 变了 |
-| **在已打开的项目之间跳** | **`Alt+;` 再 `j`** | 工作区列表（只含已经进过的任务区） |
+| **选一个项目并进入** | **`F9`**（备用：`Alt+z` 再 `.`） | 弹出列表 → ↑↓ → **Enter** → 状态栏 `WS:`/`DESK:` 变了 |
+| **在已打开的项目之间跳** | **`Alt+z` 再 `j`** | 工作区列表（只含已经进过的任务区） |
 | **进项目后开 AI 对话桌** | **`F6`** | Grok + Shell + 监视，都在当前 DESK |
 | **看项目文件** | **先点 Grok，再 `F7`** | 左侧 Explorer **严格绑当前对话 cwd/DESK**；单击路径用默认程序打开 |
 
 列表前缀：`[任务]` 已绑定 · `[收藏]` · `[固定]` · 最底可「扫描更多」或「跳工作区」。
 
-若 **F9 完全没反应**：① 点一下 WezTerm 窗口确认聚焦 ② 笔记本试 **`Fn+F9`** ③ 改用 **`Alt+;` → `.`**（与 F9 相同）④ 右下角应闪 toast「项目选择 F9」。
+若 **F9 完全没反应**：① 点一下 WezTerm 窗口确认聚焦 ② 笔记本试 **`Fn+F9`** ③ 改用 **`Alt+z` → `.`**（与 F9 相同）④ 右下角应闪 toast「项目选择 F9」。
 
 ---
 
@@ -167,10 +167,10 @@ powershell -NoLogo -NoExit -ExecutionPolicy Bypass -File $env:USERPROFILE\.confi
 | **`F8`** | 快捷键速查面板（开关） |
 | `F11` | 全屏 |
 
-### Leader = **`Alt+;`** 然后小写
+### Leader = **`Alt+z`** 然后小写
 
-1. 按住 **左 Alt**，点 **`;`**（英文分号），松开  
-2. 状态栏出现 **`LEADER`**  
+1. 按住 **左 Alt**，点 **`z`**，松开  
+2. 状态栏出现 **`LEADER`**（若从不出现：勿再用 `Alt+;`，改用 F 键 / `Ctrl+F5`）  
 3. 再按小写键  
 
 | 键 | 作用 |
@@ -198,7 +198,7 @@ powershell -NoLogo -NoExit -ExecutionPolicy Bypass -File $env:USERPROFILE\.confi
 | `F5` | 刷新肌肉记忆 |
 | `F10` | 菜单焦点 |
 | `F12` | 开发者工具肌肉记忆 |
-| `Ctrl+;` | **交给 Grok 提示队列**（故 Leader 改为 Alt+;） |
+| `Ctrl+;` | **交给 Grok 提示队列**（故 Leader 改为 **Alt+z**） |
 
 ---
 
@@ -214,7 +214,8 @@ powershell -NoLogo -NoExit -ExecutionPolicy Bypass -File $env:USERPROFILE\.confi
 | F6 | 部分对话框切焦点 | 三栏桌 | **保留** |
 | F7 / F8 / F9 | 占用少 | — | **核心直达** |
 | F11 | 全屏惯例 | 全屏 | **保留**（窗口级） |
-| Ctrl+; | **Grok 队列** | Leader | Leader 改 **Alt+;** |
+| Ctrl+; | **Grok 队列** | Leader | Leader 改 **Alt+z** |
+| Alt+; | 中文 IME 常无 LEADER | 旧 Leader | **弃用为 Primary**；少量兼容 chord |
 | Ctrl+Shift+* | 中文输入法 | 已废弃 | 继续不用 |
 | Ctrl+Alt+* | 驱动 / AltGr | 已废弃 | 继续不用 |
 
@@ -224,7 +225,7 @@ powershell -NoLogo -NoExit -ExecutionPolicy Bypass -File $env:USERPROFILE\.confi
 
 ## 30 秒上手
 
-1. 重启或 **`Alt+;` → `'`** 重载  
+1. 重启或 **`Ctrl+F5`**（或 `Alt+z` → `'`）重载  
 2. **`F8`** 打开速查  
 3. **`F9`** 选项目 → **`F6`** 三栏 → **`F7`** 侧栏  
 4. Grok 内：`F2` 设置、`Ctrl+;` 队列 应可正常用  
@@ -236,9 +237,9 @@ powershell -NoLogo -NoExit -ExecutionPolicy Bypass -File $env:USERPROFILE\.confi
 | 现象 | 处理 |
 |------|------|
 | 还在按 F2/F3 开侧栏/项目 | 已改 **F7 / F9**；F2 留给 Grok |
-| 还在按 Ctrl+; 当 Leader | 已改 **Alt+;**；Ctrl+; 留给 Grok |
-| Alt+; 无 LEADER | 用 **左 Alt**；分号用英文标点 |
+| 还在按 Ctrl+; / Alt+; 当 Leader | 已改 **Alt+z**；Ctrl+; 留给 Grok |
+| Leader 无 LEADER 闪现 | 用 **左 Alt + z**；勿依赖 Alt+; |
 | F 键无反应 | 先点击 WezTerm 窗口确认聚焦；笔记本 `Fn+Fx` |
-| 配置报错 | `Alt+;` 再 `i` |
+| 配置报错 | `Ctrl+F5` 重载；或 `Alt+z` 再 `i` |
 
 策略源码：`workbench/keys.lua` 文件头注释。

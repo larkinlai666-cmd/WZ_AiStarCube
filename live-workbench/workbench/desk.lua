@@ -460,18 +460,10 @@ local function read_map()
 end
 
 local function write_map(map)
-  local dir = roots_file:match("^(.*)[/\\][^/\\]+$")
-  if dir then
-    pcall(function()
-      wezterm.run_child_process({
-        "powershell.exe",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "New-Item -ItemType Directory -Force -Path '" .. dir:gsub("'", "''") .. "' | Out-Null",
-      })
-    end)
-  end
+  -- Parent dir is ~/.config/wezterm/workbench (created by install).
+  -- Do NOT use wezterm.run_child_process for mkdir: even at event-time it is
+  -- heavy; at config-load it is fatal ("yield across a C-call boundary").
+  -- If the directory is missing, io.open fails and caller can toast.
   local f = io.open(roots_file, "w")
   if not f then
     return false

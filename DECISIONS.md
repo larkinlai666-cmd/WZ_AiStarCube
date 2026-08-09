@@ -72,11 +72,11 @@
 
 ### F-004 [active]
 
-- Summary: Task model uses WS (workspace name) and DESK (task root path); F9 selects/enters task; F6 opens 3-pane AI desk on DESK; F7 opens Explorer on DESK; F8 toggles cheatsheet; Leader is Alt+; then lowercase.
-- Source: `~/.config/wezterm/README.md` and cheatsheet after morning iteration.
+- Summary: Task model uses WS (workspace name) and DESK (task root path); F9 selects/enters task; F6 opens 3-pane AI desk on DESK; F7 opens Explorer on DESK; F8 toggles cheatsheet; Leader is **Alt+z** then lowercase (legacy Alt+; kept only for a few chords; primary docs must not teach Alt+; as Leader — CN IME often never enters LEADER).
+- Source: `keys.lua` + live workbench 2026-08-09 (IME-safe Leader); morning iteration for F6–F9 model.
 - Scope: Skill interaction contract.
-- Supersedes: early morning experimental F2/F3 explorer/project bindings.
-- Affects: skill key tables, agent guidance.
+- Supersedes: early morning experimental F2/F3 explorer/project bindings; teaching Leader as Alt+;.
+- Affects: skill key tables, agent guidance, cheatsheet, MAIN key map.
 
 ### F-005 [active]
 
@@ -144,6 +144,7 @@
 
 ## Status Events
 
+- 2026-08-09: Corrected `F-004` Leader chord to **Alt+z** (was documented as Alt+;); aligns with live `keys.lua` and PORTABILITY audit.
 - 2026-08-07: Initialized `M-001` and `M-002` as active project method constraints.
 - 2026-08-07: Separated product root from PPS clone; added `M-003`, `F-001`–`F-005` from recovered morning work and user protocol clarification.
 - 2026-08-07: User approved `D-001` (name WZ-AiWorkBench) and `D-002` (workbench-first; skill packaging deferred).

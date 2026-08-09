@@ -95,9 +95,10 @@ Binding table on machine: `workbench\desk-roots.tsv`. Marker: `<project>\.wz-pro
 | F8 | Cheatsheet panel toggle |
 | F4 | Close pane |
 | F11 | Fullscreen |
-| Leader `Alt+;` then lowercase | `h` help · `e` explorer · `.` pick project · `j` jump open tasks · `a`/`b` 3-pane · … |
+| Leader **`Alt+z`** then lowercase | `h` help · `e` explorer · `.` pick project · `j` jump open tasks · `a`/`b` 3-pane · … |
+| Reload (no Leader) | **`Ctrl+F5`** / `Ctrl+Shift+R`（推荐；不依赖 Leader） |
 
-Deliberately unbound: F1, F2, F5, F10, F12; `Ctrl+;` reserved for Grok prompt queue.
+Deliberately unbound: F1, F2, F5, F10, F12; `Ctrl+;` reserved for Grok prompt queue. **Do not teach `Alt+;` as Leader** (legacy partial chords only; CN IME often dead).
 
 ### Session cwd (F-005) + create freeze (F-008)
 
@@ -117,19 +118,19 @@ Grok 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。应用 `--cwd
 ### Known residual pain (workbench backlog seeds)
 
 - 已打开的旧 Explorer 窗格不会自动跟新对话；需 F4 关掉后 **先点 Grok 再 F7**。
-- F9 / Leader 依赖聚焦、英文 `;`、笔记本 `Fn`。
+- F9 / Leader 依赖 WezTerm **窗口聚焦**、笔记本 `Fn`；Leader 用 **Alt+z**（勿再用 Alt+;）。
 - 个人「彻底想要的样子」其余缺口待继续收集。
-- 配置在 home 树，跨机/备份策略未定。
+- 配置在 home 树；第三方用 `Install-WZ.ps1`，作者本机仍以 live 为准。
 
 ## Current package target (workbench-first)
 
-**PKG-001（重定向）**：冻结命名与阶段策略；把主线从「先写 skill」改为「先迭代工作台」。
+**PKG-001**：门禁 + 项目名/路径冻结（D-003 / F-007 / F-008）+ 可移植安装（F-009）已落盘；收口前补齐**验收清单**并消除契约漂移。
 
-下一步工程包应围绕：
+下一步（PKG-002 候选）：
 
-1. 用户明确的工作台缺口（布局 / 键 / 任务流 / 视觉 / 启动 / 侧栏 …）
-2. 在 live config 上改 → 真机会话验证
-3. 回写本仓 MAIN / 权威 / 可选 refs（行为契约）
+1. 用户批准下方验收清单（或增删项）
+2. 在 live 会话逐项打勾；缺口只改 live + 回写本仓契约
+3. 作者宣布「工作台达标」后再开封装包
 
 **不在当前主线：** 完整 `SKILL.md` 正文、多 skill 打包、对外分发。
 
@@ -148,9 +149,53 @@ Grok 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。应用 `--cwd
 
 - [x] 产品族名定为 WZ-AiWorkBench（D-001）
 - [x] 明确 skill 封装后置（D-002）
-- [ ] 用户给出或批准「工作台达标」验收清单
+- [x] 门禁 R1–R6 + 新建路径冻结（F-007 / F-008 / D-003）
+- [x] 第三方安装路径 `Install-WZ.ps1`（F-009）
+- [ ] 用户批准「工作台达标」验收清单（草案见下）
 - [ ] 清单项在 live 会话中全部通过
-- [ ] 行为契约与本仓文档一致（无关键漂移）
+- [ ] 行为契约与 live / `live-workbench/` 一致（无关键漂移）
+
+### Workbench acceptance checklist（草案 · 待用户批准为 D）
+
+> 批准后可将本表升格为正式验收门禁；未批准前仅作执行清单草案（P）。
+
+#### A · 身份与门禁
+
+| # | 项 | 通过标准 |
+|---|---|---|
+| A1 | Init 任务表 | 冷启动 / 新标签出现 Init 表；TASK 来自 desk-roots，home 不在正式 TASK |
+| A2 | SYS 拒开聊 | 对 home/Desktop 等 SYS 行 Enter **不能** 以正式项目开 Grok |
+| A3 | 新建冻结 | Init `c`：一次写目录 + desk-roots + `.wz-project`，Grok 仅 `--cwd` 该路径 |
+| A4 | 路径槽 | 左状态栏路径槽 = 当前页签 DESK（强路径），与 Grok 顶栏 cwd 一致 |
+| A5 | 项目名 | 页签/列表「项目名」= desk-roots 绑定名，**不是**会话标题 / cwd leaf |
+
+#### B · 键位与布局
+
+| # | 项 | 通过标准 |
+|---|---|---|
+| B1 | F9 tabs-first | 选项目后**当前窗新页签**；旧页签仍在 |
+| B2 | F6 三栏 | 在 DESK 上开 Grok + Shell + 监视三栏 |
+| B3 | F7 同根 | 先点 Grok 再 F7 → Explorer 根 = Grok `--cwd` / 页签 DESK |
+| B4 | F8 速查 | 开/关 cheatsheet；文案 Leader 为 **Alt+z** |
+| B5 | Leader | `Alt+z` 后状态栏 LEADER 闪现；`. e h j` 可用 |
+| B6 | 重载 | `Ctrl+F5` toast「配置已重载」（不依赖 Leader） |
+| B7 | 不抢 Grok | F2、`Ctrl+;` 仍归 Grok；键仅 WezTerm 聚焦生效 |
+
+#### C · 启动与可移植
+
+| # | 项 | 通过标准 |
+|---|---|---|
+| C1 | open-project | `open-project.ps1` 用 wezterm spawn 页签，不叠独立 OS 窗 |
+| C2 | Doctor | `Install-WZ.ps1 -DoctorOnly` 全绿（本机前置满足时） |
+| C3 | 纯 Shell 逃生 | `Ctrl+Alt+T` 可得无 Init 的 PowerShell |
+| C4 | 快照同步 | 改门禁/键位后 `live-workbench/` 与 `~\.config\wezterm` 无关键契约漂移 |
+
+#### D · 已知可接受残留（不阻塞达标）
+
+- 旧 Explorer 窗格不自动跟新对话（F4 后重开）
+- 笔记本 Fn 层、IME 抢键需用户环境自理
+- Codex 路径未做与 Grok 同级硬化
+- macOS/Linux 非一等支持
 
 ### Packaging phase (later)
 

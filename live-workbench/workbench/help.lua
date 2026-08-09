@@ -154,7 +154,7 @@ function M.toggle(window, pane)
   toast(
     window,
     "AI STAR CUBE",
-    "快捷键面板 · F8 或 Alt+; h 关闭 · 面板内 q",
+    "快捷键面板 · F8 或 Alt+z h 关闭 · 面板内 q",
     2800
   )
 end

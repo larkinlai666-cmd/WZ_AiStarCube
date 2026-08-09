@@ -23,3 +23,6 @@ live-workbench/workbench/favorites.txt
 *.mp4
 *.mov
 *.zip
+
+# Accidental nested clone of this repo (never commit)
+/WZ_AiStarCube/

@@ -374,7 +374,7 @@ end
 
 --- F9: fast project picker (bound tasks + favorites + fixed)
 function M.show_picker(window, pane)
-  toast(window, "项目选择 F9", "↑↓ 选择  Enter 进入  Esc 取消  |  也可 Alt+; j 跳已开工作区", 4500)
+  toast(window, "项目选择 F9", "↑↓ 选择  Enter 进入  Esc 取消  |  也可 Alt+z j 跳已开工作区", 4500)
 
   local ok, choices = pcall(M.collect_choices_fast)
   if not ok then

@@ -43,7 +43,7 @@ AI STAR CUBE shell helpers
 
 WezTerm (window-local keys only when focused)
   F7 explorer · F9 projects · F4 close pane · F6 desk · F8 help
-  Leader = Alt+; then lowercase (e/x/a/p/…); Ctrl+; left for Grok
+  Leader = Alt+z then lowercase (e/x/a/p/…); Ctrl+; left for Grok
   Pane focus: mouse click
 "@ -ForegroundColor Cyan
     }
