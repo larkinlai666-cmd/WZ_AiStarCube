@@ -9,9 +9,18 @@
 # R5  set_root / bind refuse weak paths and reserved names.
 # R6  UI Project column = Resolve-ProjectName(path); never show "home" as a task.
 #
+# UI IRON (wizard / terminal choosers) — user mandate 2026-08:
+# R-UI-1  Space blocks: identity / primary list / secondary actions / input.
+# R-UI-2  Gray/DarkGray = STATIC only. Never paint [b]/[q]/[0]/[n] choices gray.
+# R-UI-3  Actionable chips = White / Yellow / Cyan (high contrast).
+#
 # List: strong desk-roots TASK + favorites + titled recent (weak demoted).
-# New task: press c → name → path freeze → bind → open Grok with --cwd only.
-param([switch]$All)
+# New task: F3 / Init c → name → parent (choice-first) → freeze → open Grok --cwd.
+param(
+  [switch]$All,
+  # F3 / dedicated entry: run create wizard only, then exit (no Init table loop)
+  [switch]$WizardOnly
+)
 
 $ErrorActionPreference = 'Continue'
 try {
@@ -20,11 +29,15 @@ try {
   $OutputEncoding = [System.Text.Encoding]::UTF8
 } catch {}
 # Navigation-only title — never a filesystem path (prevents tab pollution)
-try { $Host.UI.RawUI.WindowTitle = 'Init' } catch {}
+try {
+  if ($WizardOnly) { $Host.UI.RawUI.WindowTitle = 'New project' }
+  else { $Host.UI.RawUI.WindowTitle = 'Init' }
+} catch {}
 
 $script:SessionsRoot  = Join-Path $env:USERPROFILE '.grok\sessions'
 $script:RootsFile     = Join-Path $env:USERPROFILE '.config\wezterm\workbench\desk-roots.tsv'
 $script:FavoritesFile = Join-Path $env:USERPROFILE '.config\wezterm\workbench\favorites.txt'
+$script:RecentParentsFile = Join-Path $env:USERPROFILE '.config\wezterm\workbench\recent-parents.tsv'
 $script:Grok          = $null  # resolved below
 $script:DefaultParent = $null  # resolved below
 $script:MaxRows       = 18
@@ -1283,13 +1296,22 @@ function Start-GrokTab {
     $spawn += '--'
     $spawn += @($script:Grok) + $fullArgs
     try {
-      & $script:Wez @spawn 2>$null | Out-Null
-      if ($LASTEXITCODE -eq 0) {
-        Write-Host ("  OK: {0}" -f $Title) -ForegroundColor Green
-        Write-Host ("  --cwd {0}" -f $Cwd) -ForegroundColor DarkGray
-        Start-Sleep -Seconds 0.6
-        return
-      }
+      $spawnOut = & $script:Wez @spawn 2>&1 | Out-String
+      $proj = Split-Path -Leaf $Cwd
+      $tabTitle = '{0} | Grok' -f $proj
+      $paneId = $null
+      if ($spawnOut -match '(\d+)') { $paneId = $Matches[1] }
+      try {
+        if ($paneId) {
+          & $script:Wez @('cli', 'set-tab-title', '--pane-id', "$paneId", $tabTitle) 2>$null | Out-Null
+        } else {
+          & $script:Wez @('cli', 'set-tab-title', $tabTitle) 2>$null | Out-Null
+        }
+      } catch {}
+      Write-Host ("  OK: {0}" -f $Title) -ForegroundColor Green
+      Write-Host ("  --cwd {0}" -f $Cwd) -ForegroundColor DarkGray
+      Start-Sleep -Seconds 0.6
+      return
     } catch {}
   }
   Set-Location -LiteralPath $Cwd
@@ -1381,252 +1403,801 @@ function Read-LinePrompt {
   return $v.Trim()
 }
 
-function Show-WizardHeader {
-  param([string]$Step)
-  Clear-Host
-  Write-Host ''
-  Write-Host '  ========================================================' -ForegroundColor DarkGray
-  Write-Host '   WZ NEW TASK WIZARD' -ForegroundColor White
-  Write-Host '  ========================================================' -ForegroundColor DarkGray
-  Write-Host ("  Step: {0}" -f $Step) -ForegroundColor Gray
-  Write-Host '  Tip: Enter accepts default; type q to cancel' -ForegroundColor DarkGray
-  Write-Host ''
+function Close-CurrentWezPane {
+  # Close the pane running this script (F3 WizardOnly tab).
+  $paneId = $env:WEZTERM_PANE
+  $wez = $script:Wez
+  if (-not $wez) {
+    try {
+      $c = Get-Command wezterm -ErrorAction SilentlyContinue
+      if ($c -and $c.Source) { $wez = [string]$c.Source }
+    } catch {}
+  }
+  if ($wez -and $paneId) {
+    try {
+      & $wez @('cli', 'kill-pane', '--pane-id', "$paneId") 2>$null | Out-Null
+    } catch {}
+  }
+  exit 0
 }
 
-function Get-ParentPresets {
-  # Preferred parents for NEW projects — portable, never USERPROFILE / Desktop as default
-  $list = @()
-  $n = 1
+function Stop-Wizard {
+  # cancel | done — when -WizardOnly, always close the tab (do not leave a PS prompt)
+  param([ValidateSet('cancel', 'done')]$How = 'cancel')
+  if ($WizardOnly) {
+    Write-Host ''
+    if ($How -eq 'cancel') {
+      Write-Host '  Cancelled. Closing tab...' -ForegroundColor DarkGray
+    } else {
+      Write-Host '  Done. Closing wizard tab...' -ForegroundColor DarkGray
+    }
+    Start-Sleep -Milliseconds 400
+    Close-CurrentWezPane
+  }
+  if ($How -eq 'cancel') {
+    $script:StatusHint = 'Wizard cancelled'
+  }
+}
+
+function Format-CliLeaf {
+  # Display only filename so users do not click a full .exe/.cmd path (misleading hyperlink)
+  param([string]$Exe)
+  if ([string]::IsNullOrWhiteSpace($Exe)) { return '' }
+  try {
+    return [System.IO.Path]::GetFileName($Exe)
+  } catch {
+    return $Exe
+  }
+}
+
+# =============================================================================
+# UI IRON RULE (wizard / Init panels) — do not violate
+# -----------------------------------------------------------------------------
+# R-UI-1  Spacing: separate identity / primary choices / secondary actions /
+#         input with blank lines. Never glue all blocks into one dense corner.
+# R-UI-2  Color roles:
+#           White/Yellow/Cyan = selectable actions and primary data
+#           Green             = confirmed identity (name/path summary)
+#           DarkGray/Gray     = STATIC labels only (section titles, tips)
+#                               NEVER use gray for [b] [q] [0] [9] or any choice
+# R-UI-3  Every actionable key chip must be high-contrast (Yellow or White).
+# =============================================================================
+
+function Write-UiBlank {
+  param([int]$N = 1)
+  for ($i = 0; $i -lt $N; $i++) { Write-Host '' }
+}
+
+function Write-UiRule {
+  param([ConsoleColor]$Fg = [ConsoleColor]::DarkCyan)
+  Write-Host '  ============================================================' -ForegroundColor $Fg
+}
+
+function Write-UiSoftRule {
+  Write-Host '  ------------------------------------------------------------' -ForegroundColor DarkGray
+}
+
+function Write-UiSection {
+  # Static section label only — not a choice
+  param([string]$Text)
+  Write-Host ("  {0}" -f $Text) -ForegroundColor DarkGray
+}
+
+function Write-UiChoice {
+  # Actionable option line — NEVER DarkGray
+  param([string]$Text, [ConsoleColor]$Fg = [ConsoleColor]::Yellow)
+  Write-Host ("  {0}" -f $Text) -ForegroundColor $Fg
+}
+
+function Write-UiStatic {
+  param([string]$Text, [ConsoleColor]$Fg = [ConsoleColor]::DarkGray)
+  Write-Host ("  {0}" -f $Text) -ForegroundColor $Fg
+}
+
+function Show-WizardHeader {
+  param([string]$Title, [string]$Hint = '')
+  Clear-Host
+  Write-UiBlank 1
+  Write-UiRule -Fg Cyan
+  Write-Host '   WZ NEW PROJECT' -ForegroundColor White
+  Write-UiRule -Fg Cyan
+  Write-UiBlank 1
+  Write-Host ("  {0}" -f $Title) -ForegroundColor White
+  if ($Hint) {
+    Write-UiBlank 1
+    Write-UiStatic $Hint
+  }
+  Write-UiBlank 1
+  Write-UiSoftRule
+  Write-UiBlank 1
+}
+
+function Build-LocationOptions {
+  # Fills $script:WzLocN / WzLocFull / WzLocTag parallel arrays (max 8).
+  # NEVER return nested Object[] — that caused System.Object[] cast crashes.
+  param([string]$ProjectName)
+
+  $script:WzLocN = New-Object System.Collections.Generic.List[int]
+  $script:WzLocFull = New-Object System.Collections.Generic.List[string]
+  $script:WzLocTag = New-Object System.Collections.Generic.List[string]
+
+  $parents = New-Object System.Collections.Generic.List[string]
+  $tags = @{}
+
+  function Add-P([string]$p, [string]$tag) {
+    if ([string]::IsNullOrWhiteSpace($p)) { return }
+    try { $p = [System.IO.Path]::GetFullPath($p.Trim().TrimEnd('\')) } catch {
+      $p = $p.Trim().TrimEnd('\')
+    }
+    if (Test-WeakPath -Cwd $p) { return }
+    $k = Normalize-PathKey $p
+    foreach ($e in $parents) {
+      if ((Normalize-PathKey $e) -eq $k) { return }
+    }
+    [void]$parents.Add($p)
+    $tags[$k] = $tag
+  }
+
   $def = Get-DefaultProjectsParent
   $script:DefaultParent = $def
-  $candidates = @(
-    $def,
-    'G:\GrokProject',
-    'D:\GrokProject',
-    'E:\GrokProject',
-    'C:\GrokProject',
-    (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'GrokProjects'),
-    [Environment]::GetFolderPath('MyDocuments')
-  )
-  $seen = @{}
-  foreach ($path in $candidates) {
-    if (-not $path) { continue }
-    $pk = Normalize-PathKey $path
-    if ($seen.ContainsKey($pk)) { continue }
-    # Offer default even if missing (wizard will create); others only if exist
-    $isDefault = ((Normalize-PathKey $path) -eq (Normalize-PathKey $def))
-    if ($isDefault -or (Test-Path -LiteralPath $path)) {
-      $seen[$pk] = $true
-      $list += [pscustomobject]@{ Num = $n; Path = $path }
-      $n++
-    }
-  }
-  return $list
-}
+  if ($def) { Add-P ([string]$def) 'RECOMMENDED' }
 
-function Invoke-NewTaskWizard {
-  # Step 2 of product plan: freeze project path at create time so session identity
-  # and project content cannot separate.
-  try { $Host.UI.RawUI.CursorVisible = $true } catch {}
+  try {
+    foreach ($r in (Get-RecentParents)) {
+      if ($r) { Add-P ([string]$r) 'RECENT' }
+    }
+  } catch {}
 
-  Show-WizardHeader '1/4  Project name (binding name)'
-  Write-Host "  Project name = desk-roots binding name (list / F9 / status)." -ForegroundColor Gray
-  Write-Host "  Also used as default folder name. Grok chat title is NOT project name." -ForegroundColor DarkGray
-  Write-Host "  Allowed: A-Z a-z 0-9 . _ -   examples: WZ_Skill  my-game  app01" -ForegroundColor DarkGray
-  Write-Host "  Forbidden: home Desktop Documents Downloads Administrator ..." -ForegroundColor DarkRed
-  Write-Host ''
-  $name = ''
-  while ($true) {
-    $name = Read-LinePrompt -Label 'Project name'
-    if ($name -eq 'q' -or $name -eq 'Q') {
-      $script:StatusHint = 'Wizard cancelled'
-      return
+  try {
+    foreach ($n in (Get-NeighborParents)) {
+      if ($n -and $n.Path) { Add-P ([string]$n.Path) 'NEAR' }
     }
-    if (Test-ValidProjectName -Name $name) { break }
-    if (Test-ReservedName -Name $name) {
-      Write-Host '  Reserved name (system) — pick a real project name' -ForegroundColor Red
-    } else {
-      Write-Host '  Invalid name, try again' -ForegroundColor Red
-    }
-  }
+  } catch {}
 
-  Show-WizardHeader '2/4  Project path (FROZEN)'
-  Write-Host ("  Name: {0}" -f $name) -ForegroundColor Green
-  Write-Host ("  Default parent: {0}" -f (Get-DefaultProjectsParent)) -ForegroundColor DarkGray
-  Write-Host '  (override with env WZ_PROJECTS_ROOT)' -ForegroundColor DarkGray
-  Write-Host ''
-  Write-Host '  Path will be WRITTEN DEAD into desk-roots + .wz-project.' -ForegroundColor Yellow
-  Write-Host '  All future Grok sessions for this task use --cwd = this path only.' -ForegroundColor Gray
-  Write-Host ''
-  $presets = Get-ParentPresets
-  if ($presets.Count -eq 0) {
-    $script:DefaultParent = Get-DefaultProjectsParent
-    if (-not (Test-Path -LiteralPath $script:DefaultParent)) {
-      try { New-Item -ItemType Directory -Force -Path $script:DefaultParent | Out-Null } catch {}
-    }
-    $presets = Get-ParentPresets
-  }
-  foreach ($p in $presets) {
-    $mark = if ($p.Num -eq 1) { '  [recommended]' } else { '' }
-    Write-Host ("    [{0}]  {1}\{2}{3}" -f $p.Num, $p.Path, $name, $mark) -ForegroundColor Yellow
-  }
-  Write-Host '    [0]  type full project path yourself' -ForegroundColor Yellow
-  Write-Host '    [f]  sibling of currently selected strong project' -ForegroundColor Yellow
-  Write-Host ''
-
-  $fullPath = $null
-  while (-not $fullPath) {
-    $choice = Read-LinePrompt -Label 'Choice or path' -Default '1'
-    if ($choice -eq 'q' -or $choice -eq 'Q') {
-      $script:StatusHint = 'Wizard cancelled'
-      return
-    }
-    if ($choice -eq '0') {
-      $manual = Read-LinePrompt -Label ('Full path (e.g. {0}\MyApp)' -f (Get-DefaultProjectsParent))
-      if ($manual -eq 'q') { $script:StatusHint = 'Wizard cancelled'; return }
-      if (-not [string]::IsNullOrWhiteSpace($manual)) {
-        $candidate = $manual.Trim().TrimEnd('\')
-        try { $candidate = [System.IO.Path]::GetFullPath($candidate) } catch {}
-        if (-not (Test-StrongProjectPath -Cwd $candidate)) {
-          Write-Host '  GATE: path is weak/system — refuse' -ForegroundColor Red
-          continue
-        }
-        $fullPath = $candidate
-      }
-      continue
-    }
-    if ($choice -eq 'f' -or $choice -eq 'F') {
-      $sel = Get-SelectedRow
-      if ($sel -and $sel.Cwd -and (Test-StrongProjectPath -Cwd $sel.Cwd) -and (Test-Path -LiteralPath $sel.Cwd)) {
-        $parent = Split-Path -Parent $sel.Cwd
-        $candidate = Join-Path $parent $name
-        if (-not (Test-StrongProjectPath -Cwd $candidate)) {
-          Write-Host '  GATE: resulting path is weak — refuse' -ForegroundColor Red
-        } else {
-          $fullPath = $candidate
-        }
-      } else {
-        Write-Host '  No usable strong selected path' -ForegroundColor Red
-      }
-      continue
-    }
-    if ($choice -match '^\d+$') {
-      $num = [int]$choice
-      $hit = $presets | Where-Object { $_.Num -eq $num } | Select-Object -First 1
-      if ($hit) {
-        $candidate = Join-Path $hit.Path $name
-        try { $candidate = [System.IO.Path]::GetFullPath($candidate) } catch {}
-        if (-not (Test-StrongProjectPath -Cwd $candidate)) {
-          Write-Host '  GATE: resulting path is weak/system — refuse' -ForegroundColor Red
-          continue
-        }
-        $fullPath = $candidate
-        continue
-      }
-    }
-    if ($choice -match '^[A-Za-z]:\\' -or $choice.StartsWith('\\')) {
-      $p = $choice.Trim().TrimEnd('\')
-      if ((Split-Path -Leaf $p) -ieq $name) { $candidate = $p }
-      elseif (Test-Path -LiteralPath $p) { $candidate = Join-Path $p $name }
-      else { $candidate = $p }
-      try { $candidate = [System.IO.Path]::GetFullPath($candidate) } catch {}
-      if (-not (Test-StrongProjectPath -Cwd $candidate)) {
-        Write-Host '  GATE: path is weak/system — refuse' -ForegroundColor Red
-        continue
-      }
-      $fullPath = $candidate
-      continue
-    }
-    Write-Host '  Unrecognized. Use number 0-N or a full path.' -ForegroundColor Red
-  }
-
-  $fullPath = [System.IO.Path]::GetFullPath($fullPath)
-  # Leaf should match name when using parent\name convention (warn if not)
-  $leaf = Split-Path -Leaf $fullPath
-  if ($leaf -ine $name) {
-    Write-Host ("  Note: folder leaf '{0}' differs from project name '{1}' (allowed; binding uses name)" -f $leaf, $name) -ForegroundColor DarkYellow
-  }
-
-  Show-WizardHeader '3/4  Confirm FREEZE name + path'
-  Write-Host ("  PROJECT : {0}" -f $name) -ForegroundColor White
-  Write-Host ("  PATH    : {0}" -f $fullPath) -ForegroundColor Yellow
-  Write-Host '  These two values are written dead. Session identity = PATH via --cwd.' -ForegroundColor Gray
-  $exists = Test-Path -LiteralPath $fullPath
-  if ($exists) {
-    Write-Host '  Dir exists - will bind only (no wipe)' -ForegroundColor Green
-  } else {
-    Write-Host '  Dir missing - will create empty folder + .wz-project' -ForegroundColor DarkYellow
-  }
-  Write-Host ''
-  Write-Host "  Writes: desk-roots.tsv + PATH\.wz-project" -ForegroundColor DarkGray
-  Write-Host ''
-  $ok = Read-LinePrompt -Label 'Confirm freeze create/bind? (Y/n)' -Default 'Y'
-  if ($ok -match '^(n|N|q|Q)') {
-    $script:StatusHint = 'Wizard cancelled'
-    return
+  foreach ($c in @('G:\GrokProject', 'D:\GrokProject', 'E:\GrokProject', 'C:\GrokProject')) {
+    try {
+      if (Test-Path -LiteralPath $c) { Add-P $c 'DISK' }
+    } catch {}
   }
 
   try {
-    if (-not $exists) {
-      New-Item -ItemType Directory -Force -Path $fullPath | Out-Null
-      Write-Host ("  + created {0}" -f $fullPath) -ForegroundColor Green
+    $docs = [Environment]::GetFolderPath('MyDocuments')
+    if ($docs) { Add-P (Join-Path $docs 'GrokProjects') 'DOCS' }
+  } catch {}
+
+  if ($parents.Count -eq 0 -and $def) {
+    [void]$parents.Add([string]$def)
+    $tags[(Normalize-PathKey $def)] = 'RECOMMENDED'
+  }
+
+  $n = 1
+  foreach ($p in $parents) {
+    if ($n -gt 8) { break }
+    $full = Join-Path ([string]$p) ([string]$ProjectName)
+    try { $full = [System.IO.Path]::GetFullPath($full) } catch {}
+    $k = Normalize-PathKey $p
+    $tag = ''
+    if ($tags.ContainsKey($k)) { $tag = [string]$tags[$k] }
+    [void]$script:WzLocN.Add([int]$n)
+    [void]$script:WzLocFull.Add([string]$full)
+    [void]$script:WzLocTag.Add([string]$tag)
+    $n++
+  }
+}
+
+function Get-LocationCount {
+  if (-not $script:WzLocN) { return 0 }
+  return [int]$script:WzLocN.Count
+}
+
+function Build-InstalledAiCliOptions {
+  # Fills parallel lists: WzCliN/Id/Label/Exe/Kind — no nested Object[] returns.
+  $script:WzCliN = New-Object System.Collections.Generic.List[int]
+  $script:WzCliId = New-Object System.Collections.Generic.List[string]
+  $script:WzCliLabel = New-Object System.Collections.Generic.List[string]
+  $script:WzCliExe = New-Object System.Collections.Generic.List[string]
+  $script:WzCliKind = New-Object System.Collections.Generic.List[string]
+  $seen = @{}
+  $script:WzCliBuildN = 1
+
+  function Add-Cli([string]$Id, [string]$Label, [string]$Exe, [string]$Kind) {
+    if ([string]::IsNullOrWhiteSpace($Exe)) { return }
+    if (-not (Test-Path -LiteralPath $Exe)) { return }
+    $k = $Exe.ToLowerInvariant()
+    if ($seen.ContainsKey($k)) { return }
+    $seen[$k] = $true
+    $n = [int]$script:WzCliBuildN
+    $script:WzCliBuildN = $n + 1
+    [void]$script:WzCliN.Add($n)
+    [void]$script:WzCliId.Add([string]$Id)
+    [void]$script:WzCliLabel.Add([string]$Label)
+    [void]$script:WzCliExe.Add([string]$Exe)
+    [void]$script:WzCliKind.Add([string]$Kind)
+  }
+
+  $cmdMap = @(
+    @{ Id = 'grok'; Label = 'Grok Build CLI'; Names = @('grok'); Kind = 'grok' },
+    @{ Id = 'codex'; Label = 'OpenAI Codex CLI'; Names = @('codex'); Kind = 'codex' },
+    @{ Id = 'claude'; Label = 'Claude Code CLI'; Names = @('claude'); Kind = 'claude' },
+    @{ Id = 'gemini'; Label = 'Gemini CLI'; Names = @('gemini'); Kind = 'gemini' },
+    @{ Id = 'aider'; Label = 'Aider'; Names = @('aider'); Kind = 'aider' },
+    @{ Id = 'opencode'; Label = 'OpenCode'; Names = @('opencode'); Kind = 'opencode' },
+    @{ Id = 'cursor'; Label = 'Cursor Agent'; Names = @('cursor-agent', 'cursor'); Kind = 'cursor' }
+  )
+
+  foreach ($m in $cmdMap) {
+    foreach ($nm in $m.Names) {
+      try {
+        $cmd = Get-Command $nm -ErrorAction SilentlyContinue
+        if ($cmd -and $cmd.Source -and (Test-Path -LiteralPath $cmd.Source)) {
+          Add-Cli -Id $m.Id -Label $m.Label -Exe ([string]$cmd.Source) -Kind $m.Kind
+          break
+        }
+      } catch {}
     }
-    Set-DeskRootBinding -Name $name -Path $fullPath
-    Write-Host ("  + FROZEN: {0} -> {1}" -f $name, $fullPath) -ForegroundColor Green
-    Write-Host ("  + marker: {0}\.wz-project" -f $fullPath) -ForegroundColor Green
-  } catch {
-    Write-Host ("  FAIL: {0}" -f $_.Exception.Message) -ForegroundColor Red
-    Write-Host '  any key...' -ForegroundColor DarkGray
-    [void]$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+  }
+
+  if ($script:Grok -and (Test-Path -LiteralPath $script:Grok)) {
+    Add-Cli -Id 'grok' -Label 'Grok Build CLI' -Exe ([string]$script:Grok) -Kind 'grok'
+  }
+  foreach ($gp in @(
+      (Join-Path $env:USERPROFILE '.grok\bin\grok.exe'),
+      (Join-Path $env:LOCALAPPDATA 'Programs\grok\grok.exe')
+    )) {
+    if ($gp -and (Test-Path -LiteralPath $gp)) {
+      Add-Cli -Id 'grok' -Label 'Grok Build CLI' -Exe $gp -Kind 'grok'
+    }
+  }
+
+  # Always offer shell (do not require Test-Path on bare name)
+  $psExe = 'powershell.exe'
+  try {
+    $psc = Get-Command powershell.exe -ErrorAction SilentlyContinue
+    if ($psc -and $psc.Source) { $psExe = [string]$psc.Source }
+  } catch {}
+  $hasShell = $false
+  foreach ($k in $script:WzCliKind) { if ($k -eq 'shell') { $hasShell = $true; break } }
+  if (-not $hasShell) {
+    $nShell = [int]$script:WzCliN.Count + 1
+    [void]$script:WzCliN.Add($nShell)
+    [void]$script:WzCliId.Add('shell')
+    [void]$script:WzCliLabel.Add('PowerShell only (no AI CLI)')
+    [void]$script:WzCliExe.Add($psExe)
+    [void]$script:WzCliKind.Add('shell')
+  }
+}
+
+function Get-CliCount {
+  if (-not $script:WzCliN) { return 0 }
+  return [int]$script:WzCliN.Count
+}
+
+function Initialize-NewProjectSkeleton {
+  # Empty folder + "Explain this codebase" often hangs/crashes AI CLIs.
+  param([string]$Path, [string]$Name)
+  try {
+    $readme = Join-Path $Path 'README.md'
+    if (-not (Test-Path -LiteralPath $readme)) {
+      $body = @(
+        "# $Name"
+        ''
+        'Created by WZ New Project wizard.'
+        ''
+        '## Notes'
+        '- Project path is frozen in desk-roots and .wz-project'
+        '- Add source files here; AI CLIs use this folder as cwd'
+        ''
+      ) -join "`n"
+      $utf8 = New-Object System.Text.UTF8Encoding $false
+      [System.IO.File]::WriteAllText($readme, $body, $utf8)
+    }
+  } catch {}
+}
+
+function Start-ProjectWithCli {
+  param(
+    [string]$Cwd,
+    [string]$Name,
+    [string]$Kind,
+    [string]$Exe,
+    [string]$Label,
+    [string]$Id
+  )
+  $title = "new $Name"
+  $Kind = [string]$Kind
+  $Exe = [string]$Exe
+  $Id = [string]$Id
+  $Label = [string]$Label
+
+  if (-not (Test-Path -LiteralPath $Cwd)) {
+    Write-Host ("  FAIL: project folder missing: {0}" -f $Cwd) -ForegroundColor Red
+    Write-Host '  Create/bind may have failed earlier.' -ForegroundColor Yellow
     return
   }
 
-  Show-WizardHeader '4/4  Open (always --cwd = frozen path)'
-  Write-Host ("  Task {0} is ready" -f $name) -ForegroundColor Green
-  Write-Host ("  {0}" -f $fullPath) -ForegroundColor Yellow
-  Write-Host ''
-  Write-Host "    [1]  Open Grok now (new session, --cwd=PATH)  [recommended]" -ForegroundColor Cyan
-  Write-Host '    [2]  Open Grok with a first prompt' -ForegroundColor Cyan
-  Write-Host '    [3]  Bind only, return to list' -ForegroundColor Gray
-  Write-Host '    [4]  Open PowerShell in project (no Grok)' -ForegroundColor Gray
-  Write-Host ''
-  $mode = Read-LinePrompt -Label 'Choice' -Default '1'
-  if ($mode -eq 'q' -or $mode -eq 'Q') {
-    $script:StatusHint = "Bound $name - Enter later from list"
+  if ($Kind -eq 'shell') {
+    if ($script:Wez -and (Test-WezAlive)) {
+      & $script:Wez @('cli', 'spawn', '--cwd', $Cwd, '--', 'powershell.exe', '-NoLogo') 2>$null | Out-Null
+    } else {
+      Set-Location -LiteralPath $Cwd
+    }
+    $script:StatusHint = "Shell @ $Name"
     return
   }
 
-  switch ($mode) {
-    '2' {
-      $prompt = Read-LinePrompt -Label 'First prompt for Grok'
-      if ($prompt -eq 'q') { break }
-      $gargs = @('--cwd', $fullPath)
-      if (-not [string]::IsNullOrWhiteSpace($prompt)) { $gargs += $prompt }
-      Start-GrokTab -Cwd $fullPath -GrokArgs $gargs -Title ("new task {0}" -f $name)
-    }
-    '3' {
-      $script:StatusHint = "Frozen task $name @ $fullPath"
-    }
-    '4' {
-      if ($script:Wez -and (Test-WezAlive)) {
-        & $script:Wez @('cli', 'spawn', '--cwd', $fullPath, '--', 'powershell.exe', '-NoLogo') 2>$null | Out-Null
-      } else {
-        Set-Location -LiteralPath $fullPath
-      }
-      $script:StatusHint = "Shell @ $name"
-    }
+  if ($Kind -eq 'grok') {
+    if ($Exe -and (Test-Path -LiteralPath $Exe)) { $script:Grok = $Exe }
+    Start-GrokTab -Cwd $Cwd -GrokArgs @('--cwd', $Cwd) -Title $title
+    return
+  }
+
+  # ------------------------------------------------------------------
+  # Windows shims (.cmd / .ps1 from winget/npm) MUST NOT be argv0 of
+  # CreateProcess. Spawn PowerShell with --cwd, then invoke the command
+  # name on PATH. Direct spawn of codex.cmd caused freezes / wrong host.
+  # ------------------------------------------------------------------
+  $invoke = switch ($Kind) {
+    'codex' { 'codex' }
+    'claude' { 'claude' }
+    'gemini' { 'gemini' }
+    'aider' { 'aider' }
+    'opencode' { 'opencode' }
+    'cursor' { 'cursor-agent' }
     default {
-      Start-GrokTab -Cwd $fullPath -GrokArgs @('--cwd', $fullPath) -Title ("new task {0}" -f $name)
+      $leaf = Format-CliLeaf $Exe
+      if ($leaf -match '^(.*)\.(cmd|bat|ps1)$') { $Matches[1] } else { $leaf }
     }
   }
+  if ([string]::IsNullOrWhiteSpace($invoke)) { $invoke = $Id }
 
-  Build-Rows | Out-Null
-  for ($ii = 0; $ii -lt $script:Rows.Count; $ii++) {
-    if ($script:Rows[$ii].Project -eq $name) { $script:Selected = $ii; break }
+  $cwdEsc = $Cwd.Replace("'", "''")
+  $invEsc = $invoke.Replace("'", "''")
+  $nameEsc = $Name.Replace("'", "''")
+  # Role for tab bar (status.lua reads title for "Project | Codex")
+  $role = switch ($Kind) {
+    'codex' { 'Codex' }
+    'claude' { 'Claude' }
+    'gemini' { 'Gemini' }
+    'aider' { 'Aider' }
+    'opencode' { 'OpenCode' }
+    'cursor' { 'Cursor' }
+    default { if ($Id) { $Id } else { 'AI' } }
+  }
+  $roleEsc = $role.Replace("'", "''")
+  # Keep shell open if CLI exits/crashes so user sees the error instead of a dead tab
+  $psCommand = @"
+`$ErrorActionPreference = 'Continue'
+try { `$Host.UI.RawUI.WindowTitle = '$nameEsc | $roleEsc' } catch {}
+Set-Location -LiteralPath '$cwdEsc'
+Write-Host ''
+Write-Host ('  WZ launch: {0}' -f '$invEsc') -ForegroundColor Cyan
+Write-Host ('  cwd:      {0}' -f (Get-Location).Path) -ForegroundColor DarkGray
+Write-Host ''
+try {
+  `$cmdName = '$invEsc'
+  & `$cmdName
+} catch {
+  Write-Host `$_.Exception.Message -ForegroundColor Red
+}
+Write-Host ''
+Write-Host '  CLI ended. Window kept open - close tab when done.' -ForegroundColor DarkGray
+"@
+
+  if ($script:Wez -and (Test-WezAlive)) {
+    try {
+      $spawnOut = & $script:Wez @(
+        'cli', 'spawn',
+        '--cwd', $Cwd,
+        '--',
+        'powershell.exe',
+        '-NoLogo',
+        '-NoExit',
+        '-ExecutionPolicy', 'Bypass',
+        '-Command', $psCommand
+      ) 2>&1 | Out-String
+      # Prefer explicit tab title so bar never falls back to literal "Tab"
+      $tabTitle = '{0} | {1}' -f $Name, $role
+      $paneId = $null
+      if ($spawnOut -match '(\d+)') { $paneId = $Matches[1] }
+      try {
+        if ($paneId) {
+          & $script:Wez @('cli', 'set-tab-title', '--pane-id', "$paneId", $tabTitle) 2>$null | Out-Null
+        } else {
+          & $script:Wez @('cli', 'set-tab-title', $tabTitle) 2>$null | Out-Null
+        }
+      } catch {}
+      Write-Host ("  OK: started {0} via PowerShell host" -f $Label) -ForegroundColor Green
+      Write-Host ("  cwd {0}" -f $Cwd) -ForegroundColor DarkGray
+      Write-Host ("  cmd {0}" -f $invoke) -ForegroundColor DarkGray
+      Write-Host ("  tab {0}" -f $tabTitle) -ForegroundColor DarkGray
+    } catch {
+      Write-Host ("  FAIL spawn: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    }
+  } else {
+    Write-Host '  Start manually in this folder:' -ForegroundColor Yellow
+    Write-Host ("    cd /d {0}" -f $Cwd) -ForegroundColor Yellow
+    Write-Host ("    {0}" -f $invoke) -ForegroundColor Yellow
+  }
+  $script:StatusHint = "$Id @ $Name"
+}
+
+function Write-WzProjectMarkerEx {
+  param(
+    [string]$Name,
+    [string]$Path,
+    [string]$CliId = '',
+    [string]$CliExe = ''
+  )
+  $Path = $Path.Trim().TrimEnd('\')
+  $marker = Join-Path $Path '.wz-project'
+  $lines = New-Object System.Collections.Generic.List[string]
+  [void]$lines.Add('# WZ project identity - frozen at create/bind')
+  [void]$lines.Add(('name={0}' -f $Name))
+  [void]$lines.Add(('path={0}' -f $Path))
+  if ($CliId) { [void]$lines.Add(('cli={0}' -f $CliId)) }
+  if ($CliExe) { [void]$lines.Add(('cli_exe={0}' -f $CliExe)) }
+  [void]$lines.Add(('created={0:yyyy-MM-ddTHH:mm:ssK}' -f (Get-Date)))
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllLines($marker, @($lines.ToArray()), $utf8)
+}
+
+function Invoke-NewTaskWizard {
+  # 4 steps / 4 prompts. UI iron rules: R-UI-1 spacing, R-UI-2 gray=static only.
+  try { $Host.UI.RawUI.CursorVisible = $true } catch {}
+  if (-not $script:Grok) {
+    try { $script:Grok = Resolve-GrokExe } catch {}
+  }
+
+  $step = 1
+  $name = ''
+  $fullPath = ''
+  $cliIdx = -1
+
+  while ($step -ge 1 -and $step -le 4) {
+    try {
+      # ========== STEP 1: NAME ==========
+      if ($step -eq 1) {
+        Show-WizardHeader -Title 'Step 1 / 4   Project name' -Hint 'Binding name = default folder name'
+        Write-UiSection 'RULES (static 鈥?not choices)'
+        Write-UiBlank 1
+        Write-UiStatic 'Allowed : A-Z a-z 0-9 . _ -     e.g. WZ_Skill  my-game'
+        Write-UiStatic 'Forbidden: home Desktop Documents Downloads Administrator'
+        Write-UiBlank 2
+        Write-UiSoftRule
+        Write-UiBlank 1
+        Write-UiSection 'ACTIONS'
+        Write-UiBlank 1
+        Write-UiChoice '[q]  cancel wizard' -Fg White
+        Write-UiBlank 2
+        $name = Read-LinePrompt -Label 'Name'
+        if ($name -eq 'q' -or $name -eq 'Q') {
+          Stop-Wizard -How cancel
+          return
+        }
+        if (-not (Test-ValidProjectName -Name $name)) {
+          if (Test-ReservedName -Name $name) {
+            Write-Host '  ERROR: reserved system name' -ForegroundColor Red
+          } else {
+            Write-Host '  ERROR: invalid name' -ForegroundColor Red
+          }
+          Start-Sleep -Milliseconds 900
+          continue
+        }
+        $step = 2
+        continue
+      }
+
+      # ========== STEP 2: LOCATION ==========
+      if ($step -eq 2) {
+        Build-LocationOptions -ProjectName $name
+        $cnt = Get-LocationCount
+        Show-WizardHeader -Title 'Step 2 / 4   Create location' -Hint 'Pick one path. Final = parent\name'
+
+        Write-UiSection 'PROJECT'
+        Write-UiBlank 1
+        Write-Host ("  NAME     {0}" -f $name) -ForegroundColor Green
+        Write-UiBlank 2
+
+        Write-UiSoftRule
+        Write-UiBlank 1
+        Write-UiSection 'LOCATIONS  (enter a number)'
+        Write-UiBlank 1
+        if ($cnt -lt 1) {
+          Write-Host '  (no auto options 鈥?use 0 or 9)' -ForegroundColor DarkYellow
+        } else {
+          for ($i = 0; $i -lt $cnt; $i++) {
+            $nn = [int]$script:WzLocN[$i]
+            $full = [string]$script:WzLocFull[$i]
+            $tag = [string]$script:WzLocTag[$i]
+            Write-UiBlank 1
+            if ($tag) {
+              Write-UiChoice ('[{0}]  {1}' -f $nn, $tag) -Fg White
+            } else {
+              Write-UiChoice ('[{0}]' -f $nn) -Fg White
+            }
+            Write-Host ('       {0}' -f $full) -ForegroundColor Yellow
+          }
+        }
+
+        Write-UiBlank 2
+        Write-UiSoftRule
+        Write-UiBlank 1
+        Write-UiSection 'OTHER ACTIONS'
+        Write-UiBlank 1
+        Write-UiChoice '[0]  or  [9]   type PARENT folder only' -Fg Cyan
+        Write-UiChoice '[b]             back to project name' -Fg White
+        Write-UiChoice '[q]             cancel wizard' -Fg White
+        Write-UiBlank 2
+
+        $def = if ($cnt -gt 0) { '1' } else { '0' }
+        $ch = Read-LinePrompt -Label 'Location' -Default $def
+        if ($ch -eq 'q' -or $ch -eq 'Q') {
+          Stop-Wizard -How cancel
+          return
+        }
+        if ($ch -eq 'b' -or $ch -eq 'B') {
+          $step = 1
+          continue
+        }
+
+        if ($ch -eq '0' -or $ch -eq '9') {
+          Write-UiBlank 1
+          Write-UiSoftRule
+          Write-UiBlank 1
+          Write-Host ("  Will create:  <parent>\{0}" -f $name) -ForegroundColor Yellow
+          Write-UiBlank 1
+          Write-UiStatic ('Example parent: {0}' -f (Get-DefaultProjectsParent))
+          Write-UiBlank 1
+          Write-UiChoice '[b]  back to list' -Fg White
+          Write-UiChoice '[q]  cancel' -Fg White
+          Write-UiBlank 1
+          $parent = Read-LinePrompt -Label 'Parent'
+          if ($parent -eq 'q' -or $parent -eq 'Q') {
+            Stop-Wizard -How cancel
+            return
+          }
+          if ($parent -eq 'b' -or $parent -eq 'B') { continue }
+          if ([string]::IsNullOrWhiteSpace($parent)) {
+            Write-Host '  ERROR: empty parent' -ForegroundColor Red
+            Start-Sleep -Milliseconds 800
+            continue
+          }
+          $parent = $parent.Trim().TrimEnd('\')
+          try { $parent = [System.IO.Path]::GetFullPath($parent) } catch {}
+          if (Test-WeakPath -Cwd $parent) {
+            Write-Host '  ERROR: parent is weak/system path' -ForegroundColor Red
+            Start-Sleep -Milliseconds 1000
+            continue
+          }
+          $cand = Join-Path $parent $name
+          try { $cand = [System.IO.Path]::GetFullPath($cand) } catch {}
+          if (-not (Test-StrongProjectPath -Cwd $cand)) {
+            Write-Host '  ERROR: result path not allowed' -ForegroundColor Red
+            Start-Sleep -Milliseconds 1000
+            continue
+          }
+          $fullPath = [string]$cand
+          $step = 3
+          continue
+        }
+
+        if ($ch -match '^\d+$') {
+          $num = [int]$ch
+          $found = $false
+          for ($i = 0; $i -lt $cnt; $i++) {
+            if ([int]$script:WzLocN[$i] -eq $num) {
+              $cand = [string]$script:WzLocFull[$i]
+              if (-not (Test-StrongProjectPath -Cwd $cand)) {
+                Write-Host '  ERROR: that path is not allowed' -ForegroundColor Red
+                Start-Sleep -Milliseconds 1000
+                $found = $true
+                break
+              }
+              $fullPath = $cand
+              $found = $true
+              $step = 3
+              break
+            }
+          }
+          if ($step -eq 3) { continue }
+          if (-not $found) {
+            Write-Host '  ERROR: number not in list' -ForegroundColor Red
+            Start-Sleep -Milliseconds 800
+          }
+          continue
+        }
+
+        Write-Host '  ERROR: enter 1-8, or 0/9, or b/q' -ForegroundColor Red
+        Start-Sleep -Milliseconds 800
+        continue
+      }
+
+      # ========== STEP 3: CLI ==========
+      if ($step -eq 3) {
+        Build-InstalledAiCliOptions
+        $cc = Get-CliCount
+        Show-WizardHeader -Title 'Step 3 / 4   AI CLI on this PC' -Hint 'Scanned PATH + common install paths'
+
+        Write-UiSection 'PROJECT'
+        Write-UiBlank 1
+        Write-Host ("  NAME     {0}" -f $name) -ForegroundColor Green
+        Write-UiBlank 1
+        Write-Host ("  PATH     {0}" -f $fullPath) -ForegroundColor Yellow
+        Write-UiBlank 2
+
+        Write-UiSoftRule
+        Write-UiBlank 1
+        Write-UiSection 'INSTALLED CLI  (enter number)'
+        Write-UiBlank 1
+        if ($cc -lt 1) {
+          Write-Host '  ERROR: no CLI rows. Press b or q.' -ForegroundColor Red
+        } else {
+          for ($i = 0; $i -lt $cc; $i++) {
+            $nn = [int]$script:WzCliN[$i]
+            $label = [string]$script:WzCliLabel[$i]
+            $exe = [string]$script:WzCliExe[$i]
+            $kind = [string]$script:WzCliKind[$i]
+            Write-UiBlank 1
+            if ($kind -eq 'shell') {
+              Write-UiChoice ('[{0}]  {1}' -f $nn, $label) -Fg Cyan
+            } else {
+              Write-UiChoice ('[{0}]  {1}' -f $nn, $label) -Fg White
+              # Leaf only — full .exe/.cmd paths are NOT useful to click (hyperlink trap)
+              Write-UiStatic ('      binary: {0}' -f (Format-CliLeaf $exe))
+            }
+          }
+        }
+        Write-UiBlank 2
+        Write-UiSoftRule
+        Write-UiBlank 1
+        Write-UiSection 'OTHER ACTIONS'
+        Write-UiBlank 1
+        Write-UiChoice '[b]  back to location' -Fg White
+        Write-UiChoice '[q]  cancel wizard' -Fg White
+        Write-UiBlank 2
+
+        $ch = Read-LinePrompt -Label 'CLI' -Default '1'
+        if ($ch -eq 'q' -or $ch -eq 'Q') {
+          Stop-Wizard -How cancel
+          return
+        }
+        if ($ch -eq 'b' -or $ch -eq 'B') {
+          $step = 2
+          continue
+        }
+        if ($ch -match '^\d+$') {
+          $num = [int]$ch
+          $cliIdx = -1
+          for ($i = 0; $i -lt $cc; $i++) {
+            if ([int]$script:WzCliN[$i] -eq $num) { $cliIdx = $i; break }
+          }
+          if ($cliIdx -ge 0) {
+            $step = 4
+            continue
+          }
+        }
+        Write-Host '  ERROR: pick a number from the list' -ForegroundColor Red
+        Start-Sleep -Milliseconds 800
+        continue
+      }
+
+      # ========== STEP 4: CONFIRM ==========
+      if ($step -eq 4) {
+        if ($cliIdx -lt 0) { $step = 3; continue }
+        $cliLabel = [string]$script:WzCliLabel[$cliIdx]
+        $cliExe = [string]$script:WzCliExe[$cliIdx]
+        $cliKind = [string]$script:WzCliKind[$cliIdx]
+        $cliId = [string]$script:WzCliId[$cliIdx]
+
+        Show-WizardHeader -Title 'Step 4 / 4   Confirm create' -Hint 'Review summary, then Y to freeze and open'
+
+        Write-UiSection 'SUMMARY'
+        Write-UiBlank 1
+        Write-Host ("  NAME     {0}" -f $name) -ForegroundColor Green
+        Write-UiBlank 1
+        Write-Host ("  PATH     {0}" -f $fullPath) -ForegroundColor Yellow
+        Write-UiBlank 1
+        Write-Host ("  CLI      {0}" -f $cliLabel) -ForegroundColor Cyan
+        if ($cliKind -ne 'shell') {
+          Write-UiBlank 1
+          Write-UiStatic ('BINARY   {0}' -f (Format-CliLeaf $cliExe))
+        }
+        Write-UiBlank 1
+        $exists = Test-Path -LiteralPath $fullPath
+        if ($exists) {
+          Write-Host '  DIR      exists (bind only, no wipe)' -ForegroundColor Green
+        } else {
+          Write-Host '  DIR      will create new folder' -ForegroundColor DarkYellow
+        }
+
+        Write-UiBlank 2
+        Write-UiSoftRule
+        Write-UiBlank 1
+        Write-UiSection 'ACTIONS'
+        Write-UiBlank 1
+        Write-UiChoice '[Y]  create + bind + open' -Fg White
+        Write-UiChoice '[b]  back to CLI list' -Fg White
+        Write-UiChoice '[q]  cancel (nothing written)' -Fg White
+        Write-UiBlank 2
+
+        $ok = Read-LinePrompt -Label 'Create now (Y/n)' -Default 'Y'
+        if ($ok -eq 'q' -or $ok -eq 'Q') {
+          Stop-Wizard -How cancel
+          return
+        }
+        if ($ok -eq 'b' -or $ok -eq 'B' -or $ok -match '^(n|N)') {
+          $step = 3
+          continue
+        }
+
+        try {
+          if (-not $exists) {
+            New-Item -ItemType Directory -Force -Path $fullPath | Out-Null
+            Write-Host ("  + created {0}" -f $fullPath) -ForegroundColor Green
+          }
+          if (-not (Test-Path -LiteralPath $fullPath)) {
+            throw "Folder still missing after create: $fullPath"
+          }
+          Initialize-NewProjectSkeleton -Path $fullPath -Name $name
+          Set-DeskRootBinding -Name $name -Path $fullPath
+          Write-WzProjectMarkerEx -Name $name -Path $fullPath -CliId $cliId -CliExe $cliExe
+          Write-Host ("  + FROZEN {0} -> {1}" -f $name, $fullPath) -ForegroundColor Green
+          Write-Host ("  + README.md skeleton (empty projects crash some CLIs)" ) -ForegroundColor DarkGray
+          try {
+            $par = Split-Path -Parent $fullPath
+            if ($par) { Add-RecentParent -ParentPath $par }
+          } catch {}
+        } catch {
+          Write-Host ("  FAIL: {0}" -f $_.Exception.Message) -ForegroundColor Red
+          Write-Host '  Press Enter to stay on confirm...' -ForegroundColor Yellow
+          try { [void](Read-Host) } catch {}
+          continue
+        }
+
+        Write-UiBlank 1
+        Write-Host '  Opening AI CLI in project folder...' -ForegroundColor Cyan
+        Write-Host ("  Expect cwd: {0}" -f $fullPath) -ForegroundColor DarkGray
+        try {
+          Start-ProjectWithCli -Cwd $fullPath -Name $name -Kind $cliKind -Exe $cliExe -Label $cliLabel -Id $cliId
+        } catch {
+          Write-Host ("  Open failed: {0}" -f $_.Exception.Message) -ForegroundColor Red
+          Write-Host '  Project is still created and bound.' -ForegroundColor Yellow
+        }
+
+        try {
+          Build-Rows | Out-Null
+          for ($ii = 0; $ii -lt $script:Rows.Count; $ii++) {
+            if ($script:Rows[$ii].Project -eq $name) { $script:Selected = $ii; break }
+          }
+        } catch {}
+
+        # F3 dedicated tab: close after success (project already opened in new tab)
+        Stop-Wizard -How done
+        return
+      }
+    } catch {
+      Write-Host ''
+      Write-Host ("  ERROR: {0}" -f $_.Exception.Message) -ForegroundColor Red
+      Write-Host '  Staying on this step. q=cancel' -ForegroundColor Yellow
+      Start-Sleep -Milliseconds 1500
+    }
   }
 }
 
 # ---- main ----
+if ($WizardOnly) {
+  # F3 / dedicated new-project entry — no Init table loop
+  try {
+    if (-not $script:Grok) { $script:Grok = Resolve-GrokExe }
+  } catch {}
+  $script:DefaultParent = Get-DefaultProjectsParent
+  try { $script:DeskRoots = Read-DeskRoots } catch { $script:DeskRoots = [ordered]@{} }
+  Invoke-NewTaskWizard
+  # If wizard returned without Stop-Wizard (edge), still close the tab
+  try { $Host.UI.RawUI.CursorVisible = $true } catch {}
+  Stop-Wizard -How done
+}
+
 $running = $true
 while ($running) {
   Show-Screen

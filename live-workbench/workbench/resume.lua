@@ -18,7 +18,7 @@ function M.bootstrap_args()
   return launch.bootstrap_args()
 end
 
---- Open the table init panel in a new tab (or current if requested)
+--- Open the table init panel in a new tab (mouse + / cold start preferred)
 function M.show_hub(window, pane)
   local mux_window = window:mux_window()
   local tab, main = mux_window:spawn_tab({
@@ -32,6 +32,29 @@ function M.show_hub(window, pane)
     tab:set_title("Init")
   end
   toast(window, "任务初始化面板", "Enter续聊 · c新建向导 · n同项目新开 · a更松列表", 4500)
+end
+
+--- F3: jump straight into NEW PROJECT wizard (not Init table)
+function M.show_new_project(window, pane)
+  local mux_window = window:mux_window()
+  local tab, main = mux_window:spawn_tab({
+    args = launch.wizard_args(),
+    cwd = home,
+  })
+  if main then
+    main:activate()
+  end
+  if tab then
+    pcall(function()
+      tab:set_title("新建项目")
+    end)
+  end
+  toast(
+    window,
+    "新建本地项目",
+    "名 → 选父目录 → 确认冻结 → 开 Grok  |  q 取消",
+    5000
+  )
 end
 
 --- Continue latest session for current tab project (fast path)

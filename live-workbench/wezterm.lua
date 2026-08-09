@@ -105,4 +105,4 @@ end
 
 return config
 
--- reload-bump: 2026-08-09T12:00:00-load-safety-softfail
+-- reload-bump: 2026-08-10T01:00:00-tab-role-not-literal-Tab

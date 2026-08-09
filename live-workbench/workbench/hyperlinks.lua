@@ -13,17 +13,18 @@ function M.apply(config)
     highlight = 1,
   })
 
-  -- Windows absolute paths → file URL (files AND folders in sidebar)
-  -- Example: G:\GrokProject\WZ_Skill\docs
+  -- Windows absolute paths → file URL (folders / source files).
+  -- Prefer non-launcher extensions so .exe/.cmd/.ps1 do not become links
+  -- (clicking them caused wrong app / "trust directory" noise).
   table.insert(rules, {
-    regex = "([A-Za-z]:\\\\(?:[^<>:\\\"/|?*\\r\\n]+\\\\)*[^<>:\\\"/|?*\\r\\n]*)",
+    regex = "([A-Za-z]:\\\\(?:[^<>:\\\"/|?*\\r\\n]+\\\\)*[^<>:\\\"/|?*\\r\\n]+\\.(?:md|txt|rs|ts|tsx|js|jsx|json|lua|py|toml|ya?ml|go|java|cs|cpp|h|hpp|css|html|ps1m?|log|csv))",
     format = "file:///$1",
     highlight = 1,
   })
 
-  -- Also match forward-slash Windows paths if any
+  -- Project folders (no file extension): path ending without a trailing slash is ok
   table.insert(rules, {
-    regex = "([A-Za-z]:/(?:[^<>:\\\"|?*\\r\\n]+/)*[^<>:\\\"|?*\\r\\n]*)",
+    regex = "([A-Za-z]:\\\\(?:[^<>:\\\"/|?*\\r\\n.]+\\\\)+[^<>:\\\"/|?*\\r\\n.]+)",
     format = "file:///$1",
     highlight = 1,
   })

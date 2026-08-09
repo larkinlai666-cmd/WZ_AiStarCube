@@ -149,11 +149,14 @@ function M.apply(config)
   config.swallow_mouse_click_on_window_focus = true
 
   config.mouse_bindings = {
-    -- Prefer opening hyperlinks on plain click (OSC-8 + regex file paths)
+    -- Plain click: finish selection only — do NOT open hyperlinks.
+    -- Accidental clicks on path text (wizard / agent logs) were opening
+    -- wrong apps (e.g. .cmd / trust-directory prompts). Intentional open:
+    -- Ctrl+Click or Middle-Click.
     {
       event = { Up = { streak = 1, button = "Left" } },
       mods = "NONE",
-      action = wezterm.action.CompleteSelectionOrOpenLinkAtMouseCursor("Clipboard"),
+      action = wezterm.action.CompleteSelection("Clipboard"),
     },
     {
       event = { Up = { streak = 1, button = "Left" } },

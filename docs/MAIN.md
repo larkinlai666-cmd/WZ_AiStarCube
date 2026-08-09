@@ -85,6 +85,18 @@ Binding table on machine: `workbench\desk-roots.tsv`. Marker: `<project>\.wz-pro
 
 **Gates (F-007):** home / Desktop / Documents 根 / Downloads / AppData / Temp 永不当正式项目；启动菜单不再提供 “Grok @ home”；Init 对 SYS 行拒绝 Enter 开聊。
 
+### Terminal UI iron rules (wizard / choosers)
+
+| ID | Rule |
+|----|------|
+| **R-UI-1** | 信息分区舒展：身份摘要 / 主选项列表 / 次要动作 / 输入行 之间用空行与分隔线隔开，禁止全部挤在一角。 |
+| **R-UI-2** | **灰色（Gray / DarkGray）只用于静态说明**（章节标题、提示、不可点的元信息）。**禁止**把有效选项画成灰色。 |
+| **R-UI-3** | 一切可点选项（含 `[b] back`、`[q] cancel`、`[0]`/`[9]`、数字项）必须用 **White / Yellow / Cyan** 等高对比色。 |
+| **R-UI-4** | **无意义的超链接禁止可点**：向导里 CLI 的 `.exe/.cmd/.ps1` 只显示文件名；终端默认 **单击不打开链接**，需 **Ctrl+单击**（或中键）才打开有意义的 `file://` / URL。误点导致错误 cwd / trust 提示视为缺陷。 |
+| **R-UI-5** | F3 **新建向导**（`-WizardOnly`）：`q` 取消或流程正常结束后 **自动关闭该标签**，不得留下空 `PS>` 要求用户再 F4。 |
+
+实现：`bootstrap.ps1`（`Stop-Wizard` / `Format-CliLeaf`）、`options.lua` 鼠标、`hyperlinks.lua`；违规视为缺陷。
+
 ### Core key map (current local truth · F-004)
 
 | Key | Action |

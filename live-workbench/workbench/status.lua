@@ -16,7 +16,7 @@ local desk = require("workbench.desk")
 local M = {}
 
 -- Bump on every status logic change so stacked old handlers no-op
-local STATUS_GEN = 28
+local STATUS_GEN = 29
 
 -- Catppuccin Mocha accents (same family as config.color_scheme):
 --   brand  = Yellow  #f9e2af  (identity, fixed)
@@ -110,27 +110,69 @@ function M.toggle_hud(window, pane)
   end
 end
 
-local function tab_tool(proc)
+--- Role chip for tab bar. NEVER return the word "Tab" (looks like a WezTerm bug).
+--- When AI is launched via PowerShell host, foreground is often "powershell.exe"
+--- or "node.exe" — also inspect tab/pane title set by the launcher.
+local function tab_tool(proc, title)
   proc = (proc or ""):lower()
-  if proc:find("grok") then
-    return "Grok"
+  title = (title or ""):lower()
+
+  local function from_text(s)
+    if not s or s == "" then
+      return nil
+    end
+    if s:find("grok", 1, true) then
+      return "Grok"
+    end
+    if s:find("codex", 1, true) then
+      return "Codex"
+    end
+    if s:find("claude", 1, true) then
+      return "Claude"
+    end
+    if s:find("gemini", 1, true) then
+      return "Gemini"
+    end
+    if s:find("aider", 1, true) then
+      return "Aider"
+    end
+    if s:find("opencode", 1, true) then
+      return "OpenCode"
+    end
+    if s:find("cursor", 1, true) then
+      return "Cursor"
+    end
+    return nil
   end
-  if proc:find("codex") then
-    return "Codex"
+
+  -- Prefer title (launcher sets "name | Codex") over process name
+  local by_title = from_text(title)
+  if by_title then
+    return by_title
   end
-  if proc:find("sidebar") or proc:find("explorer") then
+
+  local by_proc = from_text(proc)
+  if by_proc then
+    return by_proc
+  end
+
+  if proc:find("node", 1, true) then
+    -- node host for several CLIs; title should have won already
+    return "AI"
+  end
+  if proc:find("sidebar", 1, true) or proc:find("explorer", 1, true) then
     return "Files"
   end
-  if proc:find("bootstrap") or proc:find("wz%-init") then
+  if proc:find("bootstrap", 1, true) or proc:find("wz%-init", 1, true) or title:find("new project", 1, true) then
     return "Init"
   end
-  if proc:find("cheatsheet") then
+  if proc:find("cheatsheet", 1, true) or title:find("help", 1, true) then
     return "Help"
   end
-  if proc:find("powershell") or proc:find("pwsh") or proc:find("cmd") then
+  if proc:find("powershell", 1, true) or proc:find("pwsh", 1, true) or proc:find("cmd", 1, true) then
     return "Shell"
   end
-  return "Tab"
+  return "App"
 end
 
 --- Strip path pollution so tab bar stays pure navigation (never "D:\foo\bar")
@@ -221,9 +263,10 @@ local function tab_has_unseen_output(tab, pane, panes)
   return pane_has_unseen(pane)
 end
 
---- Pure navigation label: "Role" or short "Project · Role" — never full paths.
+--- Pure navigation label: "Project | Role" — never full paths, never literal "Tab".
 local function tab_project(tab, pane, proc)
-  local tool = tab_tool(proc)
+  local t = tab.tab_title
+  local tool = tab_tool(proc, t)
   -- Utility panes: role-only navigation (no project file bleed)
   if tool == "Init" or tool == "Help" or tool == "Files" then
     return nil, tool
@@ -238,9 +281,21 @@ local function tab_project(tab, pane, proc)
     return nav_clean(desk.project_label(root)), tool
   end
 
-  local t = tab.tab_title
-  if t and (tostring(t):find("初始化") or tostring(t):find("选任务") or tostring(t):find("Init")) then
+  if t and (tostring(t):find("初始化") or tostring(t):find("选任务") or tostring(t):find("Init") or tostring(t):find("New project")) then
     return nil, "Init"
+  end
+
+  -- Title form set by launcher: "shuaibi | Codex" or "shuaibi · Codex"
+  local title_proj = tostring(t or ""):match("^(.-)%s*[|·•]%s*")
+  if title_proj and title_proj ~= "" then
+    title_proj = nav_clean(title_proj)
+    if title_proj and not desk.is_reserved_name(title_proj) then
+      local by = desk.get_root(title_proj)
+      if desk.is_strong_path(by) then
+        return nav_clean(desk.project_label(by)), tool
+      end
+      return title_proj, tool
+    end
   end
 
   local from_title = desk.title_to_project_name(t)
@@ -250,14 +305,32 @@ local function tab_project(tab, pane, proc)
     if desk.is_strong_path(by) then
       return nav_clean(desk.project_label(by)), tool
     end
-    -- Only accept title if it is not path-like and not a reserved system name
     if not tostring(t or ""):match("^[A-Za-z]:[\\/]") then
       return from_title, tool
     end
   end
 
-  -- Do NOT pull raw pane cwd into the tab title (causes D:\aa pollution).
-  -- Prefer bound desk for this tab only.
+  -- Last resort: pane cwd → project label (bind for HUD, not raw path in tab)
+  if pane then
+    local cwd = nil
+    pcall(function()
+      if type(pane) == "table" and pane.current_working_dir then
+        local u = pane.current_working_dir
+        if type(u) == "table" and u.file_path then
+          cwd = desk.normalize(u.file_path)
+        elseif type(u) == "string" then
+          cwd = desk.normalize(u)
+        end
+      end
+    end)
+    if desk.is_strong_path(cwd) then
+      if id then
+        desk.set_tab_desk_by_id(id, cwd)
+      end
+      return nav_clean(desk.project_label(cwd) or desk.basename(cwd)), tool
+    end
+  end
+
   return nil, tool
 end
 
@@ -281,7 +354,7 @@ local function build_left_status(root, bound, tab_id)
     fg = C.path_empty_fg
     bold = false
   elseif not bound or not desk.is_strong_path(root) then
-    body = "(no project - F9)"
+    body = "(no project - F3)"
     bg = C.path_empty_bg
     fg = C.path_empty_fg
     bold = false
@@ -405,8 +478,12 @@ function M.apply(config)
       proc = pane.foreground_process_name or ""
     end
     local project, tool = tab_project(tab, pane, proc)
-    if not tool then
-      tool = tab_tool(proc)
+    if not tool or tool == "" then
+      tool = tab_tool(proc, tab.tab_title)
+    end
+    -- Guard: never surface engine fallback junk in the tab bar
+    if tool == "Tab" or tool == "tab" then
+      tool = "App"
     end
 
     -- Pure navigation label (our only customization). Length does not depend on activity.

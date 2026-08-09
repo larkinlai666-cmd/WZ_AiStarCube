@@ -55,7 +55,7 @@ M.grok_exe = resolve_grok_exe()
 M.bootstrap_ps1 = home .. "\\.config\\wezterm\\workbench\\bootstrap.ps1"
 M.no_bootstrap_flag = home .. "\\.config\\wezterm\\workbench\\no-bootstrap"
 
---- Task init panel (startup + new tab default)
+--- Task init panel (startup + new tab default / + button)
 function M.bootstrap_args()
   return {
     "powershell.exe",
@@ -65,6 +65,20 @@ function M.bootstrap_args()
     "Bypass",
     "-File",
     M.bootstrap_ps1,
+  }
+end
+
+--- F3: create-project wizard only (same engine as Init key "c")
+function M.wizard_args()
+  return {
+    "powershell.exe",
+    "-NoLogo",
+    "-NoExit",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    M.bootstrap_ps1,
+    "-WizardOnly",
   }
 end
 
