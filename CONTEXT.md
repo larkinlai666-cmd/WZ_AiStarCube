@@ -3,13 +3,13 @@
 ## Workset Manifest
 
 - Methods: M-001, M-002, M-003
-- Facts: F-001, F-002, F-003, F-004, F-005, F-006
-- Decisions: D-001, D-002
+- Facts: F-001, F-002, F-003, F-004, F-005, F-006, F-007, F-008
+- Decisions: D-001, D-002, D-003
 - Sources: none
 - Assets: none
 - Components: C-ROOT, C-WB, C-REF-WEZ, C-SKILL, C-LAUNCH
 - Read: PROJECT_STATE.md,CONTEXT.md,DECISIONS.md,docs/MAIN.md,docs/refs/wezterm-local.md
-- Write: PROJECT_STATE.md,CONTEXT.md,DECISIONS.md,docs/MAIN.md,PROJECT_MAP.md
+- Write: PROJECT_STATE.md,CONTEXT.md,DECISIONS.md,docs/MAIN.md
 - Verify: powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1
 - Excluded: none
 - Coverage: CONTEXT.md
@@ -17,10 +17,10 @@
 ## Current Package
 
 - ID: PKG-001
-- Goal: Lock name WZ-AiWorkBench + workbench-first phase; demote skill packaging from critical path.
-- Output anchor: `docs/MAIN.md`
-- Allowed change: Docs, approved D-*, maps; placeholder skill demotion only.
-- Forbidden change: PPS product import; new D-* without OK; shipping skill as current deliverable.
+- Goal: Gates + project-name freeze (D-003/F-007/F-008); keep workbench-first; skill packaging deferred.
+- Output anchor: `docs/MAIN.md` + live `~\.config\wezterm\workbench\*`
+- Allowed change: Live workbench gates/create-flow; docs/authority; open-project.ps1.
+- Forbidden change: PPS product import; shipping skill as current deliverable.
 
 ## Pending Feedback
 
@@ -40,8 +40,8 @@
 
 ## Current Risks
 
-- Wrong session cwd until `--cwd` / `open-project.ps1`.
-- Live config vs docs drift.
+- Historical home-cwd sessions remain on disk (hidden unless Init `a`); do not resume as formal TASK.
+- Live config vs docs drift if gates change only on one side.
 - No explicit acceptance list → workbench phase cannot close.
 
 ## Constraint Coverage
@@ -57,9 +57,12 @@
 | F-004 | WS/DESK + F6–F9 | `docs/MAIN.md` key map | Present |
 | F-005 | Session `--cwd` | `open-project.ps1` | Present |
 | F-006 | Explorer↔AI same DESK + click open | live `desk.lua` / `sidebar.ps1` | Present |
+| F-007 | Hard gates R1–R6 + project name def | live `desk.lua` / `bootstrap.ps1` | Present |
+| F-008 | Create flow freezes path | Init wizard `c` + `.wz-project` | Present |
 | D-001 | Name WZ-AiWorkBench | `docs/MAIN.md` Naming | Present |
 | D-002 | Workbench-first | `docs/MAIN.md` Phase policy | Present |
+| D-003 | Project name/path freeze | `DECISIONS.md` + desk-roots | Present |
 
 ## Next Action
 
-User smoke-test: focus Grok → F7 → DESK must match chat top bar; click a file opens default app. Collect next workbench gaps.
+Reload WezTerm config; open Init: TASK list must not show home/Desktop; Enter on WZ_Skill uses `--cwd G:\GrokProject\WZ_Skill`; path slot matches. Optional: `c` wizard create a throwaway project under `G:\GrokProject`.

@@ -72,15 +72,18 @@ Source of runtime behavior: `%USERPROFILE%\.config\wezterm\`（**不在本 git �
 5. **不与 Grok 抢** `F2`、`Ctrl+;`。
 6. 绑定仅在 **WezTerm 窗口聚焦** 时生效（非系统全局热键）。
 
-### Task model (F-004)
+### Task model (F-004 + D-003)
 
-| Concept | Status bar | Meaning |
+| Concept | Where | Meaning |
 |---|---|---|
-| **WS** | `WS:name` | Task workspace |
-| **DESK** | `DESK:folder` | Task root directory (default cwd for Grok/F6) |
-| Align / drift | green / orange | Whether pane cwd is under DESK |
+| **项目名** | `desk-roots` 左列 / `.wz-project` `name=` | 绑定名（列表/F9/页签显示）；**不是** Grok 会话标题 |
+| **项目路径** | `desk-roots` 右列 / `.wz-project` `path=` | 写死的绝对路径；Grok 必须以 `--cwd` 启动于此 |
+| **会话 cwd** | Grok 顶栏 | 进程启动 cwd；会话内 `cd` 不改身份 |
+| **路径槽** | Wez 左状态栏 | 当前页签 DESK（强路径） |
 
-Binding table on machine: `workbench\desk-roots.tsv`.
+Binding table on machine: `workbench\desk-roots.tsv`. Marker: `<project>\.wz-project`.
+
+**Gates (F-007):** home / Desktop / Documents 根 / Downloads / AppData / Temp 永不当正式项目；启动菜单不再提供 “Grok @ home”；Init 对 SYS 行拒绝 Enter 开聊。
 
 ### Core key map (current local truth · F-004)
 
@@ -96,9 +99,11 @@ Binding table on machine: `workbench\desk-roots.tsv`.
 
 Deliberately unbound: F1, F2, F5, F10, F12; `Ctrl+;` reserved for Grok prompt queue.
 
-### Session cwd (F-005)
+### Session cwd (F-005) + create freeze (F-008)
 
 Grok 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。应用 `--cwd` 或 `open-project.ps1`（优先 `wezterm cli spawn` / `--new-tab`，禁止裸 `Start-Process grok` 叠 OS 窗）。
+
+新建任务：Init 面板按 `c` → 项目名 → 冻结路径（默认 `G:\GrokProject\<name>`）→ 写 `desk-roots` + `.wz-project` → 仅用该 PATH 开 Grok。避免「会话户籍在 home、内容却写项目」的散落。
 
 ### Workbench UX fixed / in progress
 

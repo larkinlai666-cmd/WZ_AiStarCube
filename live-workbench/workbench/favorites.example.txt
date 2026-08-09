@@ -1,0 +1,2 @@
+# favorites — one absolute path per line (example)
+# G:\GrokProject\WZ_AiStarCube

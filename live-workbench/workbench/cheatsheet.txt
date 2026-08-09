@@ -1,0 +1,141 @@
+﻿═══════════════════════════════════════════════════════════
+  AI STAR CUBE · 个人快捷键速查   (F8 开/关 · F4 关窗格)
+
+  【页签优先 · 多项目靠标签区分】
+  标签固定格式:  序号  项目名(12)  角色(Grok/文件/选任务/Shell)
+  重点看项目名；角色只表示这个标签里当前在干什么
+  禁止 Start-Process grok.exe（会叠独立 OS 窗）
+  第二实例 wezterm 优先进现有窗口页签（prefer_to_spawn_tabs）
+═══════════════════════════════════════════════════════════
+
+【作用域 · 先读这 4 行】
+  · 全部快捷键 = 仅 WezTerm 窗口聚焦时生效（窗口级，不是系统全局）
+  · 你切到浏览器 / 资源管理器时，F7/F9 等不会抢系统键
+  · 未绑定的键会原样进终端（如 F2 → Grok 设置）
+  · 本机未发现 PowerToys/AHK 全局热键抢键（若以后装了，以全局软件为准）
+
+【顶栏 · 仅三类信息】
+  1 品牌  ★ AI STAR CUBE（固定长度/配色，金底深字）
+  2 根目录  当前选中页签的任务根（固定40字：短留白 / 长则头…尾）
+  3 页签  「项目名 · 工具」动态长度；选中亮蓝 / 未选中深灰淡字
+  关顶栏 Alt+z Shift+H · 重载 Ctrl+F5
+【项目区怎么选 / 怎么切换 · 就记这 3 步】
+  1) 选项目开新页签:  按 F9（或 Alt+; 再按 .）→ 顶部应并排多页签
+       → 弹出列表 → ↑↓ 选 → Enter
+       → 状态栏 WS/DESK 变成该项目
+  2) 在「已打开」的任务区之间跳:
+       Alt+; 再按 j  → 工作区列表 → Enter
+  3) 进项目后开 AI:  F6=三栏对话桌
+  4) 侧栏必须与对话同根:  先点 Grok 窗格，再按 F7
+       → Explorer 的 DESK = Grok 顶栏 --cwd（严格对应）
+       → 侧栏内路径/文件名可单击，用系统默认程序打开
+
+  列表里看前缀:
+    [任务] = 已绑定过的项目（优先从这里切）
+    [收藏] = favorites.txt
+    [固定] = Home/Desktop/…
+    扫描… = 临时扫 Desktop/Documents 更多文件夹
+    跳转… = 等同 Alt+; j
+
+【一键直达 · 无修饰键（已避冲突）】
+  F3   接回面板：最近项目 / 继续对话 / Dashboard（重启后用这个）
+  Ctrl+F3  继续「本页签项目」最近一次 Grok 对话（grok -c）
+  F7   左侧 Explorer（绑当前任务 DESK）
+  F9   选项目 / 进任务区（弹列表）
+  F4   关闭当前窗格（有确认）
+  F6   标准三栏 AI 工作台（用 DESK）
+  F8   本速查面板（开/关）
+  F11  全屏
+
+【任务初始化面板 · 冷启动 + 新标签 同一套】
+  · LIST 终端真表(显示宽度对齐): # | DateTime(含日期) | Project | Model | Msgs | Branch | Title
+  · Init列表: 任务绑定优先，不用 msg 门槛；c=新建向导；Act*仅参考
+  · a=放宽过滤  j/k移动 Enter打开 n新开 i详情 d=Dashboard q退出
+  · 入口: 冷启动 / +新标签 / Ctrl+Shift+T / F3
+  · 纯 Shell: Ctrl+Alt+T 或 Alt+z \
+  · 历史: ~/.grok/sessions\
+
+  刻意不绑（让给系统 / Grok）：
+  F1  系统帮助     F2  Grok 设置     F5  刷新肌肉记忆
+  F10 菜单焦点     F12 开发者工具
+  Ctrl+;  Grok 提示队列（Leader 已不用这个）
+
+【Leader = Alt+z  松开后再按小写】
+  1) 按住左 Alt，点 z，松开
+  2) 状态栏出现 LEADER（若从不出现 = Leader 没生效，改用 F 键 / Ctrl+Shift+R）
+  3) 再按一个小写键（不要 Shift）
+  重载配置: Leader 后按 r   或直接 Ctrl+Shift+R（推荐）
+  旧 Alt+; 仅兼容少量键（r 重载 / h 帮助 / e 侧栏 / . 选项目）
+
+  布局 / 桌面
+    a   新开三栏桌（同 F6）
+    b   当前标签原地三栏
+    d   双 AI
+    r   Review 桌
+    g   专注 Grok
+    c   专注 Codex
+
+  项目 / 侧栏
+    e   Explorer（同 F7）
+    .   选项目（同 F9）
+    j   跳到已打开的任务工作区
+    ,   选项目并直接开三栏 AI 桌
+    h   速查（同 F8）
+
+  窗格 / 标签
+    x   关窗格（同 F4）
+    v   左右分屏
+    s   上下分屏
+    z   放大/还原窗格
+    o   字母选窗格（也可鼠标点）
+    t   新标签
+    w   关标签
+    n   下一标签
+    [   上一标签
+    1-9 跳到第 N 个标签
+
+  工具
+    p   命令面板
+    m   启动菜单
+    `   大启动器
+    /   搜索已绑定快捷键
+    y   QuickSelect
+    f   搜索滚动历史
+    k   Copy Mode
+    u   Workspace 名
+    i   Debug 浮层
+    '   重载配置
+    \   新开 PowerShell 标签
+    Enter  全屏
+
+【Explorer 侧栏内 · 任务绑定】
+  r 就地刷新（不必 F4 再 F7）  a 开关 auto-refresh（监视目录变化）
+  顶栏显示: WS / DESK / VIEW / 对齐|偏离
+  0 / .. / u  上级
+  s / root    回到任务根 DESK
+  b           把当前 VIEW 绑定为新 DESK
+  g / gd      VIEW / DESK 开 Grok
+  w           新 Shell
+  ? / q       帮助 / 退出侧栏循环
+
+【冲突审计摘要】
+  键        旧方案        风险                         现方案
+  F1        曾考虑速查    系统 Help 常吞键             不绑
+  F2        曾绑 Explorer Grok 设置被抢走              不绑 → 交 Grok
+  F3        曾绑项目      资源管理器「搜索」肌肉记忆   改 F9
+  Ctrl+;    曾做 Leader   与 Grok 队列冲突             改 Alt+;
+  F4/F6/F8  保留          仅 WezTerm 聚焦时生效        保留
+  F7/F9     新核心        系统占用少                   采用
+
+【故障】
+  键无反应 → 先点 WezTerm 窗口标题栏确认聚焦；笔记本试 Fn+Fx
+  Alt+; 无 LEADER → 用左侧 Alt；输入法下分号用英文标点
+  改配置后 → Alt+; 再按 ' 重载
+
+完整文档:  %USERPROFILE%\.config\wezterm\README.md
+═══════════════════════════════════════════════════════════
+  面板内 q 退出 · 或 F4 / Alt+; x 关窗格
+═══════════════════════════════════════════════════════════
+
+  [Init] c=NEW TASK WIZARD (name+folder+bind)  Enter=resume  n=new-in-project
+  List=desk-roots TASK + FAV + titled recent; Act* display only, no msg gate

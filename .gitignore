@@ -10,6 +10,15 @@ exports/
 tmp/
 local-assets/
 
+# Machine-local project marker (path is personal)
+.wz-project
+
+# Never commit personal desk bindings from a real machine copy
+**/desk-roots.tsv
+**/favorites.txt
+live-workbench/workbench/desk-roots.tsv
+live-workbench/workbench/favorites.txt
+
 # Large binary assets stay external unless the project explicitly adopts Git LFS
 *.mp4
 *.mov

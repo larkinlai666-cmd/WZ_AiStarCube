@@ -14,6 +14,9 @@
 - `F-006`
 - `D-001`
 - `D-002`
+- `D-003`
+- `F-007`
+- `F-008`
 <!-- PPS:ACTIVE:END -->
 
 ## Authority Records
@@ -106,17 +109,42 @@
 - Supersedes: PKG-001 emphasis on shipping reviewable skill body as immediate Next.
 - Affects: Stage interpretation, package goals, Write/Verify targets, agent task selection.
 
+### D-003 [active]
+
+- Summary: **Project identity is frozen at bind/create.** 「项目名」= `desk-roots.tsv` left column (binding name). 「项目路径」= right column absolute path. Optional `<path>\.wz-project` reinforces both. Grok session title / generated_title / cwd leaf are **not** the project name. Weak/system paths (home, Desktop, Documents root, Downloads, AppData, Temp, Windows) and reserved names must never become task projects. Real work sessions launch only with `grok --cwd <strong project path>`.
+- Source: User two-step correction 2026-08-09 (gates first, then create-flow path freeze).
+- Scope: Live workbench (`desk.lua`, `bootstrap.ps1`, `projects.lua`, `launch.lua`, `open-project.ps1`) and any future skill open-project guidance.
+- Supersedes: informal use of home/Desktop as desk-roots tasks; Project column = session cwd leaf.
+- Affects: Init list, F9, status path slot, F6/F7, session scatter prevention.
+
+### F-007 [active]
+
+- Summary: Hard gates R1–R6 — (R1) force `--cwd` on project Grok launches; (R2) weak/system paths never project roots; (R3) project name from desk-roots / `.wz-project` only; (R4) project path frozen at create/bind; (R5) `set_root`/bind refuse weak + reserved; (R6) UI Project column uses name-for-path reverse lookup. home/Desktop demoted from TASK list (SYS only with `a` ShowAll); launch menu no longer offers “Grok @ home”.
+- Source: Implemented 2026-08-09 in live WezTerm workbench.
+- Scope: Session identity vs project content separation.
+- Supersedes: none.
+- Affects: bootstrap Init, desk.lua, projects F9, launch menu.
+
+### F-008 [active]
+
+- Summary: New-task wizard (`c` in Init) freezes name+path in one step: creates folder if needed, writes `desk-roots.tsv` and `<path>\.wz-project`, opens Grok only with `--cwd` equal to that path (via `wezterm cli spawn --cwd`). Default parent is `G:\GrokProject`. Manual full path allowed only if strong.
+- Source: Implemented 2026-08-09.
+- Scope: Project create/bind flow.
+- Supersedes: loose wizard that could bind home/Desktop.
+- Affects: Init wizard, open-project.ps1.
+
 ## Status Events
 
 - 2026-08-07: Initialized `M-001` and `M-002` as active project method constraints.
 - 2026-08-07: Separated product root from PPS clone; added `M-003`, `F-001`–`F-005` from recovered morning work and user protocol clarification.
 - 2026-08-07: User approved `D-001` (name WZ-AiWorkBench) and `D-002` (workbench-first; skill packaging deferred).
 - 2026-08-07: Added `F-006` — Explorer/AI task-root sync + clickable default-open in sidebar.
+- 2026-08-09: Added `D-003` / `F-007` / `F-008` — project name definition, hard gates, create-flow path freeze; purged home/Desktop from desk-roots.
 
 ## Next ID Hints
 
 - Method: `M-004`
-- Fact: `F-007`
-- Decision: `D-003`
+- Fact: `F-009`
+- Decision: `D-004`
 
 These hints are conveniences, not authority. Search before allocating an ID.

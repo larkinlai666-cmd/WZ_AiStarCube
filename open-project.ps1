@@ -22,12 +22,32 @@ if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
     $ProjectRoot = "G:\GrokProject\WZ_Skill"
 }
 
-# Keep AI STAR CUBE desk-roots in sync so F7 Explorer matches Grok --cwd
+# Freeze project identity: name + path (desk-roots + .wz-project)
+# 「项目名」= binding name (not session title). Path is absolute and fixed.
 function Update-DeskRootBinding {
-    param([string]$RootPath)
+    param(
+        [string]$RootPath,
+        [string]$ProjectName = ""
+    )
     $rootsFile = Join-Path $env:USERPROFILE ".config\wezterm\workbench\desk-roots.tsv"
-    $wsName = Split-Path -Leaf $RootPath
-    if ([string]::IsNullOrWhiteSpace($wsName)) { return }
+    if ([string]::IsNullOrWhiteSpace($ProjectName)) {
+        $ProjectName = Split-Path -Leaf $RootPath
+    }
+    $reserved = @('home','desktop','documents','downloads','administrator','users','temp','appdata','windows')
+    if ($reserved -contains $ProjectName.ToLowerInvariant()) {
+        Write-Host "REFUSE: reserved project name '$ProjectName'" -ForegroundColor Red
+        return
+    }
+    $weakExact = @(
+        $env:USERPROFILE,
+        (Join-Path $env:USERPROFILE 'Desktop'),
+        (Join-Path $env:USERPROFILE 'Documents'),
+        (Join-Path $env:USERPROFILE 'Downloads')
+    ) | ForEach-Object { $_.TrimEnd('\').ToLowerInvariant() }
+    if ($weakExact -contains $RootPath.TrimEnd('\').ToLowerInvariant()) {
+        Write-Host "REFUSE: weak/system path cannot be project root: $RootPath" -ForegroundColor Red
+        return
+    }
     $dir = Split-Path $rootsFile -Parent
     if (-not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -39,21 +59,44 @@ function Update-DeskRootBinding {
             if ($t -eq "" -or $t.StartsWith("#")) { continue }
             $parts = $t -split "`t", 2
             if ($parts.Count -lt 2) { $parts = $t -split "\s+", 2 }
-            if ($parts.Count -ge 2) { $map[$parts[0]] = $parts[1] }
+            if ($parts.Count -ge 2) {
+                $k = $parts[0]; $p = $parts[1]
+                if ($reserved -contains $k.ToLowerInvariant()) { continue }
+                $map[$k] = $p
+            }
         }
     }
-    $map[$wsName] = $RootPath
+    # one path → one name
+    $pk = $RootPath.TrimEnd('\').ToLowerInvariant()
+    foreach ($k in @($map.Keys)) {
+        if ($map[$k].TrimEnd('\').ToLowerInvariant() -eq $pk -and $k -ne $ProjectName) {
+            $map.Remove($k)
+        }
+    }
+    $map[$ProjectName] = $RootPath
     $out = @(
-        "# AI STAR CUBE desk roots — workspace_name<TAB>absolute_path",
-        "# 任务工作区名 与 任务根目录 的绑定；Explorer / 状态栏 / F6 共用"
+        "# AI STAR CUBE desk roots — project_name<TAB>absolute_path",
+        "# 项目名(绑定名) 与 项目路径 写死绑定；Explorer / 状态栏 / F6 / Init 共用",
+        "# 弱路径(home/Desktop/…)与保留名不得写入"
     )
     foreach ($k in ($map.Keys | Sort-Object)) {
         $out += ($k + "`t" + $map[$k])
     }
     Set-Content -LiteralPath $rootsFile -Value $out -Encoding UTF8
-    Write-Host "DESK bind: WS=$wsName -> $RootPath"
+    # freeze on disk
+    $marker = Join-Path $RootPath ".wz-project"
+    $markerLines = @(
+        "# WZ project identity — frozen at create/bind",
+        "name=$ProjectName",
+        "path=$RootPath",
+        ("created={0:yyyy-MM-ddTHH:mm:ssK}" -f (Get-Date))
+    )
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllLines($marker, $markerLines, $utf8)
+    Write-Host "PROJECT bind: $ProjectName -> $RootPath"
+    Write-Host "marker: $marker"
 }
-Update-DeskRootBinding -RootPath $ProjectRoot
+Update-DeskRootBinding -RootPath $ProjectRoot -ProjectName "WZ_Skill"
 
 $grok = Join-Path $env:USERPROFILE ".grok\bin\grok.exe"
 if (-not (Test-Path -LiteralPath $grok)) {

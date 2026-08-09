@@ -14,8 +14,8 @@
 - Capsule: CONTEXT.md
 - Coverage: CONTEXT.md
 - Blockers: none
-- Next: Workbench gaps vs acceptance checklist; keep init panel listing WZ_Skill sessions (bootstrap filter fixed). Skill packaging still deferred (D-002).
-- Updated: 2026-08-08T09:00:00Z
+- Next: After quota restore — smoke-test live gates; acceptance checklist. Public snapshot pushed as GitHub WZ_AiStarCube. Skill packaging deferred (D-002).
+- Updated: 2026-08-09T06:00:00Z
 - Device: SK-20240507HWFH
 
 ## Objective
