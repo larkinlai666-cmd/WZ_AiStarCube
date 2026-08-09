@@ -6,7 +6,37 @@ local M = {}
 local home = wezterm.home_dir
 M.home = home
 M.powershell = { "powershell.exe", "-NoLogo" }
-M.grok_exe = home .. "\\.grok\\bin\\grok.exe"
+
+--- Resolve grok.exe portably (PATH first, then common install locations)
+local function resolve_grok_exe()
+  local candidates = {
+    home .. "\\.grok\\bin\\grok.exe",
+  }
+  local ok, stdout = wezterm.run_child_process({ "where.exe", "grok" })
+  if ok and stdout and tostring(stdout) ~= "" then
+    local first = tostring(stdout):match("([^\r\n]+)")
+    if first and #first > 0 then
+      table.insert(candidates, 1, first)
+    end
+  end
+  local la = os.getenv("LOCALAPPDATA")
+  if la and la ~= "" then
+    table.insert(candidates, la .. "\\Programs\\grok\\grok.exe")
+  end
+  for _, p in ipairs(candidates) do
+    if p and p ~= "" then
+      local f = io.open(p, "r")
+      if f then
+        f:close()
+        return p
+      end
+    end
+  end
+  -- fallback path (error messages still make sense)
+  return home .. "\\.grok\\bin\\grok.exe"
+end
+
+M.grok_exe = resolve_grok_exe()
 M.bootstrap_ps1 = home .. "\\.config\\wezterm\\workbench\\bootstrap.ps1"
 M.no_bootstrap_flag = home .. "\\.config\\wezterm\\workbench\\no-bootstrap"
 

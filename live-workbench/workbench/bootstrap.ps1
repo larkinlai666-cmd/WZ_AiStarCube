@@ -1,4 +1,4 @@
-﻿# WZ-AiWorkBench Task Init Panel (v4)
+# WZ-AiWorkBench Task Init Panel (v4)
 # ============================================================================
 # HARD GATES (keep in sync with desk.lua)
 # ============================================================================
@@ -25,8 +25,8 @@ try { $Host.UI.RawUI.WindowTitle = 'Init' } catch {}
 $script:SessionsRoot  = Join-Path $env:USERPROFILE '.grok\sessions'
 $script:RootsFile     = Join-Path $env:USERPROFILE '.config\wezterm\workbench\desk-roots.tsv'
 $script:FavoritesFile = Join-Path $env:USERPROFILE '.config\wezterm\workbench\favorites.txt'
-$script:Grok          = Join-Path $env:USERPROFILE '.grok\bin\grok.exe'
-$script:DefaultParent = 'G:\GrokProject'
+$script:Grok          = $null  # resolved below
+$script:DefaultParent = $null  # resolved below
 $script:MaxRows       = 18
 $script:RecentDays    = 45
 $script:ShowAll       = [bool]$All
@@ -48,6 +48,44 @@ foreach ($c in @(
     (Get-Command wezterm -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
   )) {
   if ($c -and (Test-Path -LiteralPath $c)) { $script:Wez = $c; break }
+}
+
+function Get-DefaultProjectsParent {
+  # Portable: env override → existing *:\GrokProject → Documents\GrokProjects
+  if ($env:WZ_PROJECTS_ROOT -and $env:WZ_PROJECTS_ROOT.Trim()) {
+    return $env:WZ_PROJECTS_ROOT.Trim().TrimEnd('\')
+  }
+  foreach ($c in @('G:\GrokProject', 'D:\GrokProject', 'E:\GrokProject', 'C:\GrokProject')) {
+    if (Test-Path -LiteralPath $c) { return $c }
+  }
+  $docs = [Environment]::GetFolderPath('MyDocuments')
+  if (-not $docs) { $docs = Join-Path $env:USERPROFILE 'Documents' }
+  return (Join-Path $docs 'GrokProjects')
+}
+
+function Resolve-GrokExe {
+  $list = New-Object System.Collections.Generic.List[string]
+  try {
+    $cmd = Get-Command grok -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source) { [void]$list.Add([string]$cmd.Source) }
+  } catch {}
+  foreach ($c in @(
+      (Join-Path $env:USERPROFILE '.grok\bin\grok.exe'),
+      (Join-Path $env:LOCALAPPDATA 'Programs\grok\grok.exe'),
+      (Join-Path $env:ProgramFiles 'grok\grok.exe')
+    )) {
+    if ($c) { [void]$list.Add($c) }
+  }
+  foreach ($c in $list) {
+    if ($c -and (Test-Path -LiteralPath $c)) { return $c }
+  }
+  return $null
+}
+
+$script:DefaultParent = Get-DefaultProjectsParent
+$script:Grok = Resolve-GrokExe
+if (-not $script:Grok) {
+  $script:Grok = Join-Path $env:USERPROFILE '.grok\bin\grok.exe'  # path used in error messages
 }
 
 function Get-DisplayWidth {
@@ -1356,14 +1394,18 @@ function Show-WizardHeader {
 }
 
 function Get-ParentPresets {
-  # Preferred parents for NEW projects — never USERPROFILE / Desktop as default
+  # Preferred parents for NEW projects — portable, never USERPROFILE / Desktop as default
   $list = @()
   $n = 1
+  $def = Get-DefaultProjectsParent
+  $script:DefaultParent = $def
   $candidates = @(
-    $script:DefaultParent,
+    $def,
     'G:\GrokProject',
     'D:\GrokProject',
     'E:\GrokProject',
+    'C:\GrokProject',
+    (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'GrokProjects'),
     [Environment]::GetFolderPath('MyDocuments')
   )
   $seen = @{}
@@ -1371,8 +1413,9 @@ function Get-ParentPresets {
     if (-not $path) { continue }
     $pk = Normalize-PathKey $path
     if ($seen.ContainsKey($pk)) { continue }
-    # Parent itself may be Documents; final project path is parent\name and must be strong
-    if (Test-Path -LiteralPath $path) {
+    # Offer default even if missing (wizard will create); others only if exist
+    $isDefault = ((Normalize-PathKey $path) -eq (Normalize-PathKey $def))
+    if ($isDefault -or (Test-Path -LiteralPath $path)) {
       $seen[$pk] = $true
       $list += [pscustomobject]@{ Num = $n; Path = $path }
       $n++
@@ -1387,10 +1430,10 @@ function Invoke-NewTaskWizard {
   try { $Host.UI.RawUI.CursorVisible = $true } catch {}
 
   Show-WizardHeader '1/4  Project name (binding name)'
-  Write-Host '  「项目名」= desk-roots 绑定名 = 之后列表/F9/状态栏显示名' -ForegroundColor Gray
-  Write-Host '  也是默认文件夹名。会话标题(Grok title) 不是项目名。' -ForegroundColor DarkGray
-  Write-Host '  Allowed: A-Z a-z 0-9 . _ -   examples: WZ_Skill  my-game  app01' -ForegroundColor DarkGray
-  Write-Host '  Forbidden: home Desktop Documents Downloads Administrator …' -ForegroundColor DarkRed
+  Write-Host "  Project name = desk-roots binding name (list / F9 / status)." -ForegroundColor Gray
+  Write-Host "  Also used as default folder name. Grok chat title is NOT project name." -ForegroundColor DarkGray
+  Write-Host "  Allowed: A-Z a-z 0-9 . _ -   examples: WZ_Skill  my-game  app01" -ForegroundColor DarkGray
+  Write-Host "  Forbidden: home Desktop Documents Downloads Administrator ..." -ForegroundColor DarkRed
   Write-Host ''
   $name = ''
   while ($true) {
@@ -1409,20 +1452,22 @@ function Invoke-NewTaskWizard {
 
   Show-WizardHeader '2/4  Project path (FROZEN)'
   Write-Host ("  Name: {0}" -f $name) -ForegroundColor Green
+  Write-Host ("  Default parent: {0}" -f (Get-DefaultProjectsParent)) -ForegroundColor DarkGray
+  Write-Host '  (override with env WZ_PROJECTS_ROOT)' -ForegroundColor DarkGray
   Write-Host ''
   Write-Host '  Path will be WRITTEN DEAD into desk-roots + .wz-project.' -ForegroundColor Yellow
   Write-Host '  All future Grok sessions for this task use --cwd = this path only.' -ForegroundColor Gray
   Write-Host ''
   $presets = Get-ParentPresets
   if ($presets.Count -eq 0) {
-    # ensure default parent exists
+    $script:DefaultParent = Get-DefaultProjectsParent
     if (-not (Test-Path -LiteralPath $script:DefaultParent)) {
       try { New-Item -ItemType Directory -Force -Path $script:DefaultParent | Out-Null } catch {}
     }
     $presets = Get-ParentPresets
   }
   foreach ($p in $presets) {
-    $mark = if ($p.Num -eq 1) { '  << recommended' } else { '' }
+    $mark = if ($p.Num -eq 1) { '  [recommended]' } else { '' }
     Write-Host ("    [{0}]  {1}\{2}{3}" -f $p.Num, $p.Path, $name, $mark) -ForegroundColor Yellow
   }
   Write-Host '    [0]  type full project path yourself' -ForegroundColor Yellow
@@ -1437,7 +1482,7 @@ function Invoke-NewTaskWizard {
       return
     }
     if ($choice -eq '0') {
-      $manual = Read-LinePrompt -Label 'Full path (e.g. G:\GrokProject\MyApp)'
+      $manual = Read-LinePrompt -Label ('Full path (e.g. {0}\MyApp)' -f (Get-DefaultProjectsParent))
       if ($manual -eq 'q') { $script:StatusHint = 'Wizard cancelled'; return }
       if (-not [string]::IsNullOrWhiteSpace($manual)) {
         $candidate = $manual.Trim().TrimEnd('\')
@@ -1513,7 +1558,7 @@ function Invoke-NewTaskWizard {
     Write-Host '  Dir missing - will create empty folder + .wz-project' -ForegroundColor DarkYellow
   }
   Write-Host ''
-  Write-Host '  Writes: desk-roots.tsv + <path>\.wz-project' -ForegroundColor DarkGray
+  Write-Host "  Writes: desk-roots.tsv + PATH\.wz-project" -ForegroundColor DarkGray
   Write-Host ''
   $ok = Read-LinePrompt -Label 'Confirm freeze create/bind? (Y/n)' -Default 'Y'
   if ($ok -match '^(n|N|q|Q)') {
@@ -1540,7 +1585,7 @@ function Invoke-NewTaskWizard {
   Write-Host ("  Task {0} is ready" -f $name) -ForegroundColor Green
   Write-Host ("  {0}" -f $fullPath) -ForegroundColor Yellow
   Write-Host ''
-  Write-Host '    [1]  Open Grok now (new session, --cwd=PATH)  << recommended' -ForegroundColor Cyan
+  Write-Host "    [1]  Open Grok now (new session, --cwd=PATH)  [recommended]" -ForegroundColor Cyan
   Write-Host '    [2]  Open Grok with a first prompt' -ForegroundColor Cyan
   Write-Host '    [3]  Bind only, return to list' -ForegroundColor Gray
   Write-Host '    [4]  Open PowerShell in project (no Grok)' -ForegroundColor Gray

@@ -17,6 +17,7 @@
 - `D-003`
 - `F-007`
 - `F-008`
+- `F-009`
 <!-- PPS:ACTIVE:END -->
 
 ## Authority Records
@@ -127,11 +128,19 @@
 
 ### F-008 [active]
 
-- Summary: New-task wizard (`c` in Init) freezes name+path in one step: creates folder if needed, writes `desk-roots.tsv` and `<path>\.wz-project`, opens Grok only with `--cwd` equal to that path (via `wezterm cli spawn --cwd`). Default parent is `G:\GrokProject`. Manual full path allowed only if strong.
-- Source: Implemented 2026-08-09.
+- Summary: New-task wizard (`c` in Init) freezes name+path in one step: creates folder if needed, writes `desk-roots.tsv` and `<path>\.wz-project`, opens Grok only with `--cwd` equal to that path (via `wezterm cli spawn --cwd`). Default parent is portable (`WZ_PROJECTS_ROOT` → existing `*:\GrokProject` → `Documents\GrokProjects`). Manual full path allowed only if strong.
+- Source: Implemented 2026-08-09; portability fix same day.
 - Scope: Project create/bind flow.
-- Supersedes: loose wizard that could bind home/Desktop.
+- Supersedes: loose wizard that could bind home/Desktop; hard-coded `G:\GrokProject` only.
 - Affects: Init wizard, open-project.ps1.
+
+### F-009 [active]
+
+- Summary: **Third-party install path.** Repo ships `Install-WZ.ps1` + `live-workbench/` so another Windows user can clone and obtain the same workbench shell (not the author's private projects/sessions). Installer backs up existing config, copies modules, creates empty desk-roots (or binds clone), runs doctor. Does not copy example.tsv as real bindings. Grok resolved via PATH + common paths.
+- Source: Adversarial portability audit 2026-08-09.
+- Scope: Onboarding, public GitHub distribution.
+- Supersedes: manual-only INSTALL.md copy recipe as primary path.
+- Affects: README, `docs/PORTABILITY.md`, Install-WZ.ps1.
 
 ## Status Events
 
@@ -140,11 +149,12 @@
 - 2026-08-07: User approved `D-001` (name WZ-AiWorkBench) and `D-002` (workbench-first; skill packaging deferred).
 - 2026-08-07: Added `F-006` — Explorer/AI task-root sync + clickable default-open in sidebar.
 - 2026-08-09: Added `D-003` / `F-007` / `F-008` — project name definition, hard gates, create-flow path freeze; purged home/Desktop from desk-roots.
+- 2026-08-09: Added `F-009` — Install-WZ.ps1 portable third-party install; fixed hard-coded G: default parent.
 
 ## Next ID Hints
 
 - Method: `M-004`
-- Fact: `F-009`
+- Fact: `F-010`
 - Decision: `D-004`
 
 These hints are conveniences, not authority. Search before allocating an ID.

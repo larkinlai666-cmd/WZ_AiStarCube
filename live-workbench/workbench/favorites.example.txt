@@ -1,2 +1,2 @@
-# favorites — one absolute path per line (example)
-# G:\GrokProject\WZ_AiStarCube
+# favorites — one absolute path per line (example format only)
+# Install-WZ.ps1 creates an empty favorites.txt. Add real paths yourself.

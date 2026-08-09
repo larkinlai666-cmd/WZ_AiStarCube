@@ -1,29 +1,46 @@
-# Live workbench snapshot (install)
+# Live workbench install
 
-This directory is a **point-in-time snapshot** of the AI STAR CUBE WezTerm config
-as developed for WZ_AiStarCube / WZ-AiWorkBench.
-
-## Install (Windows)
-
-1. Install [WezTerm](https://wezfurlong.org/wezterm/) and Grok Build CLI.
-2. Backup any existing config, then copy:
+**Prefer the repo-root installer** (handles backup, empty roots, bind clone, doctor):
 
 ```powershell
-$src = "path\to\this\repo\live-workbench"
+# from repository root
+powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1
+```
+
+## Manual install (Windows)
+
+Only if you cannot run `Install-WZ.ps1`:
+
+1. Install [WezTerm](https://wezfurlong.org/wezterm/) and Grok Build CLI.
+2. Backup `%USERPROFILE%\.config\wezterm` if it exists.
+3. Copy:
+
+```powershell
+$src = "path\to\clone\live-workbench"
 $dst = Join-Path $env:USERPROFILE ".config\wezterm"
 New-Item -ItemType Directory -Force -Path (Join-Path $dst "workbench") | Out-Null
 Copy-Item "$src\wezterm.lua" $dst -Force
-Copy-Item "$src\workbench\*" (Join-Path $dst "workbench") -Recurse -Force
-# optional bindings
-Copy-Item "$src\workbench\desk-roots.example.tsv" (Join-Path $dst "workbench\desk-roots.tsv")
-Copy-Item "$src\workbench\favorites.example.txt" (Join-Path $dst "workbench\favorites.txt")
+Copy-Item "$src\workbench\*.lua" (Join-Path $dst "workbench") -Force
+Copy-Item "$src\workbench\*.ps1" (Join-Path $dst "workbench") -Force
+Copy-Item "$src\workbench\*.txt" (Join-Path $dst "workbench") -Force
+Copy-Item "$src\workbench\*.cmd" (Join-Path $dst "workbench") -Force
+# Create EMPTY bindings — do NOT copy example.tsv as real desk-roots
+@'
+# desk roots - project_name<TAB>absolute_path
+'@ | Set-Content (Join-Path $dst "workbench\desk-roots.tsv") -Encoding UTF8
 ```
 
-3. Reload WezTerm config (Leader `Alt+;` then `'` or restart).
-4. Open Init panel → select/create a **real project** (never home/Desktop as TASK).
-5. Grok sessions must use `--cwd <project path>` (Init / F9+F6 / open-project.ps1).
+4. Restart WezTerm.
+5. Init panel → `c` create a project, or run `.\open-project.ps1` from a project folder.
 
-## Not included
+## Optional env
 
-- Your private `desk-roots.tsv` / machine absolute paths
-- Session transcripts under `~/.grok/sessions`
+| Variable | Meaning |
+|----------|---------|
+| `WZ_PROJECTS_ROOT` | Default parent folder for Init `c` wizard |
+
+## Not portable (by design)
+
+- Author's personal `desk-roots.tsv`
+- `~\.grok\sessions` transcripts
+- Non-Windows shells (PowerShell modules are the runtime)

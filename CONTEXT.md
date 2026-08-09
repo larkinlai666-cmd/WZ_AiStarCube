@@ -3,7 +3,7 @@
 ## Workset Manifest
 
 - Methods: M-001, M-002, M-003
-- Facts: F-001, F-002, F-003, F-004, F-005, F-006, F-007, F-008
+- Facts: F-001, F-002, F-003, F-004, F-005, F-006, F-007, F-008, F-009
 - Decisions: D-001, D-002, D-003
 - Sources: none
 - Assets: none
@@ -59,10 +59,11 @@
 | F-006 | Explorer↔AI same DESK + click open | live `desk.lua` / `sidebar.ps1` | Present |
 | F-007 | Hard gates R1–R6 + project name def | live `desk.lua` / `bootstrap.ps1` | Present |
 | F-008 | Create flow freezes path | Init wizard `c` + `.wz-project` | Present |
+| F-009 | Third-party Install-WZ.ps1 | `Install-WZ.ps1` + PORTABILITY | Present |
 | D-001 | Name WZ-AiWorkBench | `docs/MAIN.md` Naming | Present |
 | D-002 | Workbench-first | `docs/MAIN.md` Phase policy | Present |
 | D-003 | Project name/path freeze | `DECISIONS.md` + desk-roots | Present |
 
 ## Next Action
 
-Reload WezTerm config; open Init: TASK list must not show home/Desktop; Enter on WZ_Skill uses `--cwd G:\GrokProject\WZ_Skill`; path slot matches. Optional: `c` wizard create a throwaway project under `G:\GrokProject`.
+Third party: `git clone` + `Install-WZ.ps1` + DoctorOnly green + Init/F9 smoke. Author: keep live workbench in sync with `live-workbench/` on each gate change.

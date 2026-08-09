@@ -1,4 +1,5 @@
 # AI STAR CUBE desk roots - project_name<TAB>absolute_path
-# EXAMPLE only — replace with your real projects after install
-# 弱路径(home/Desktop/…)与保留名不得写入
-WZ_AiStarCube	G:\GrokProject\WZ_AiStarCube
+# EXAMPLE FORMAT ONLY — do NOT copy this file as desk-roots.tsv with fake paths.
+# Install-WZ.ps1 creates an empty desk-roots.tsv and optionally binds your clone.
+#
+# name	C:\absolute\path\to\project

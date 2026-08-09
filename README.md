@@ -93,17 +93,43 @@ live-workbench/          ← 可安装的 WezTerm 配置快照
 
 ---
 
-## 快速使用（已有 WezTerm）
+## 其他用户：一键获得同等工作流
+
+**目标：** clone 后安装，得到与作者一致的 **工作台壳**（键位 / Init / 门禁 / F6–F9），而不是作者的私有项目列表或聊天记录。
 
 ```powershell
-# 用正确项目根打开（示例）
-grok --cwd G:\path\to\your\project
-
-# 或在本仓库根执行（若本地路径仍叫 WZ_Skill，请改成你的 clone 路径）
-powershell -ExecutionPolicy Bypass -File .\open-project.ps1
+git clone https://github.com/larkinlai666-cmd/WZ_AiStarCube.git
+cd WZ_AiStarCube
+powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1
+# 可选：指定新建项目父目录
+# powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1 -ProjectsRoot D:\MyProjects
 ```
 
-恢复上下文：
+然后 **重启 WezTerm**。验收与限制见 [`docs/PORTABILITY.md`](docs/PORTABILITY.md)。
+
+| 你会得到 | 你不会得到 |
+|----------|------------|
+| 同样的 Init / 门禁 / F6–F9 / 路径冻结 | 作者的 desk-roots 项目清单 |
+| 本仓自动绑成第一个 TASK（可 `-SkipBindRepo`） | 作者的 Grok 会话历史 |
+| 新建向导可移植默认父目录 | macOS/Linux 一等支持（当前 Windows-first） |
+
+前置：Windows + WezTerm + Grok Build CLI。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1 -DoctorOnly
+```
+
+## 快速使用（已安装）
+
+```powershell
+# 用本仓正确 cwd 在 WezTerm 页签打开 Grok
+powershell -ExecutionPolicy Bypass -File .\open-project.ps1
+
+# 或任意项目
+grok --cwd C:\path\to\your\project
+```
+
+恢复本仓工程上下文：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\resume_packet.ps1

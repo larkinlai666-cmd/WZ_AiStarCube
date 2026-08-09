@@ -2,9 +2,10 @@
 # Never Start-Process grok.exe alone — that creates a separate OS window
 # that stacks on top of WezTerm (looks like "tabs never appear side by side").
 #
-# Usage:
-#   powershell -ExecutionPolicy Bypass -File G:\GrokProject\WZ_Skill\open-project.ps1
-#   powershell -ExecutionPolicy Bypass -File ...\open-project.ps1 -Prompt "continue WZ"
+# Usage (from any clone path):
+#   powershell -ExecutionPolicy Bypass -File .\open-project.ps1
+#   powershell -ExecutionPolicy Bypass -File .\open-project.ps1 -Prompt "continue WZ"
+#   powershell -ExecutionPolicy Bypass -File .\open-project.ps1 -Continue
 
 [CmdletBinding()]
 param(
@@ -17,9 +18,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Always this clone's root — never a machine-specific hardcoded path
 $ProjectRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
-if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
-    $ProjectRoot = "G:\GrokProject\WZ_Skill"
+if ([string]::IsNullOrWhiteSpace($ProjectRoot) -or -not (Test-Path -LiteralPath $ProjectRoot)) {
+    throw "open-project.ps1: cannot resolve project root from PSScriptRoot=$PSScriptRoot"
 }
 
 # Freeze project identity: name + path (desk-roots + .wz-project)
@@ -96,15 +98,23 @@ function Update-DeskRootBinding {
     Write-Host "PROJECT bind: $ProjectName -> $RootPath"
     Write-Host "marker: $marker"
 }
-Update-DeskRootBinding -RootPath $ProjectRoot -ProjectName "WZ_Skill"
+$bindName = Split-Path -Leaf $ProjectRoot
+if ([string]::IsNullOrWhiteSpace($bindName)) { $bindName = "WZ_AiStarCube" }
+Update-DeskRootBinding -RootPath $ProjectRoot -ProjectName $bindName
 
-$grok = Join-Path $env:USERPROFILE ".grok\bin\grok.exe"
-if (-not (Test-Path -LiteralPath $grok)) {
-    $cmd = Get-Command grok -ErrorAction SilentlyContinue
-    if ($cmd) { $grok = $cmd.Source }
+$grok = $null
+$cmd = Get-Command grok -ErrorAction SilentlyContinue
+if ($cmd -and $cmd.Source) { $grok = $cmd.Source }
+if (-not $grok -or -not (Test-Path -LiteralPath $grok)) {
+    foreach ($c in @(
+        (Join-Path $env:USERPROFILE ".grok\bin\grok.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\grok\grok.exe")
+    )) {
+        if ($c -and (Test-Path -LiteralPath $c)) { $grok = $c; break }
+    }
 }
-if (-not (Test-Path -LiteralPath $grok)) {
-    throw "grok.exe not found under ~/.grok/bin or PATH"
+if (-not $grok -or -not (Test-Path -LiteralPath $grok)) {
+    throw "grok.exe not found. Install Grok Build CLI and ensure 'grok' is on PATH or ~/.grok/bin/grok.exe exists."
 }
 
 $wez = $null

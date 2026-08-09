@@ -14,8 +14,8 @@
 - Capsule: CONTEXT.md
 - Coverage: CONTEXT.md
 - Blockers: none
-- Next: After quota restore — smoke-test live gates; acceptance checklist. Public snapshot pushed as GitHub WZ_AiStarCube. Skill packaging deferred (D-002).
-- Updated: 2026-08-09T06:00:00Z
+- Next: Third-party install smoke (fresh Windows + Install-WZ.ps1). Acceptance checklist. Skill packaging deferred (D-002).
+- Updated: 2026-08-09T07:30:00Z
 - Device: SK-20240507HWFH
 
 ## Objective
