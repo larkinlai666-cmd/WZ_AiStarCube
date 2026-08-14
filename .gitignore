@@ -31,5 +31,8 @@ live-workbench/workbench/favorites.txt
 prototypes/**/__pycache__/
 prototypes/hardening-smoke/wz-out*.txt
 prototypes/hardening-smoke/wz-err*.txt
+prototypes/hardening-smoke/wzz-out*.txt
+prototypes/hardening-smoke/wzbig-out.txt
+prototypes/hardening-smoke/fakehome/
 prototypes/hardening-smoke/wez-cfg-check.txt
 prototypes/hardening-smoke/*.png

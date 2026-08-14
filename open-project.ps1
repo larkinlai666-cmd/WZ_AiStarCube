@@ -224,7 +224,7 @@ if ($Agent -eq 'grok') {
     # process cwd — identity = process cwd set by
     # `wezterm cli spawn --cwd <path> --` (and -WorkingDirectory fallbacks).
     if ($Dashboard) {
-        Write-Host "WARNING: -Dashboard is grok-only; ignored for -Agent $Agent" -ForegroundColor Yellow
+        Write-Host "WARNING: -Dashboard is grok-only; ignored for -Agent $Agent" -ForegroundColor DarkCyan
     }
     $cliArgs = @()
     switch ($Agent) {
@@ -237,7 +237,7 @@ if ($Agent -eq 'grok') {
                 # Verified via `kimi --help`: -p/--prompt runs ONE prompt
                 # non-interactively, prints the response, then exits.
                 $cliArgs += @("-p", $Prompt)
-                Write-Host "NOTE: kimi -p is one-shot non-interactive; the pane content ends when it finishes." -ForegroundColor Yellow
+                Write-Host "NOTE: kimi -p is one-shot non-interactive; the pane content ends when it finishes." -ForegroundColor Cyan
             }
         }
         'codex' {
@@ -263,12 +263,12 @@ if ($Agent -eq 'grok') {
             if (-not [string]::IsNullOrWhiteSpace($Prompt)) {
                 # Positional [prompt...] = one-shot (prints, exits).
                 $cliArgs += $Prompt
-                Write-Host "NOTE: deepseek positional prompt is one-shot; the pane content ends when it finishes." -ForegroundColor Yellow
+                Write-Host "NOTE: deepseek positional prompt is one-shot; the pane content ends when it finishes." -ForegroundColor Cyan
             }
         }
         default {
             if ($Continue -or -not [string]::IsNullOrWhiteSpace($Prompt)) {
-                Write-Host "WARNING: -Continue/-Prompt not mapped for agent '$Agent'; ignored." -ForegroundColor Yellow
+                Write-Host "WARNING: -Continue/-Prompt not mapped for agent '$Agent'; ignored." -ForegroundColor DarkCyan
             }
         }
     }

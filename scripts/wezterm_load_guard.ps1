@@ -145,8 +145,8 @@ Get-ChildItem -LiteralPath $wb -Filter '*.lua' -File | ForEach-Object {
 
 Write-Host ''
 if ($warn.Count -gt 0) {
-  Write-Host 'WARN:' -ForegroundColor Yellow
-  $warn | ForEach-Object { Write-Host ('  - ' + $_) -ForegroundColor Yellow }
+  Write-Host 'WARN:' -ForegroundColor DarkCyan
+  $warn | ForEach-Object { Write-Host ('  - ' + $_) -ForegroundColor DarkCyan }
 }
 if ($fail.Count -gt 0) {
   Write-Host 'FAIL: config load safety violations' -ForegroundColor Red

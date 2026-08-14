@@ -30,7 +30,7 @@
 
 - P-006: MAIN acceptance checklist — user approve as D.
 - P-004/P-005: PKG-002 residual UX after checklist; freeze `skills/wz-skill/` until packaging.
-- P-011: 加固审查 R2（docs/hardening-review-2.md，M×6/L×8）— user 圈定施工范围（M2-6 需先裁决 A/B）.
+- P-011: 加固审查 R2 — 已施工全量并回归绿（M2-1~6 + L2-1/2/3/5/7/9；L2-4/6/8 留观察），待用户 live 终验.
 
 ## Working Assumptions
 
@@ -76,4 +76,4 @@
 
 ## Next Action
 
-加固审查 R2 完成（P-011：docs/hardening-review-2.md，H0/M6/L8，只审未改）。User: ① 审阅 P-011 圈定施工范围（M2-6 启动菜单裸 agent 需裁决 A 移除/B 标注逃生舱）；② wezterm 完全重开后终验——猫动画播完清屏无残留、亮黄只剩芯片与输入前缀、DeepSeek 402 充值后可用。随后 F6 三栏形态定夺（A/B/C）→ 批准验收清单（P-006 → D）→ 逐项打勾。M-3 留后续包。
+P-011 施工完成并回归全绿、已推送远端（M2-1~6 全修 + L 批 6 项；L2-4/6/8 留观察）。User: wezterm 完全重开后终验——启动菜单只剩 Init/grok dash/PS/CMD 四入口、超长数字手滑得提示不脏屏。随后 F6 三栏形态定夺（A/B/C）→ 批准验收清单（P-006 → D）→ 逐项打勾。M-3 留后续包。

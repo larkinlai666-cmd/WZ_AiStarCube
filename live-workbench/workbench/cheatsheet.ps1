@@ -1,4 +1,4 @@
-# AI STAR CUBE cheatsheet pane (F8 / Leader+h)
+﻿# AI STAR CUBE cheatsheet pane (F8 / Leader+h)
 # Keep this file ASCII-safe in structure; body text loads from cheatsheet.txt (UTF-8).
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -27,7 +27,7 @@ if (Test-Path -LiteralPath $sheet) {
   Get-Content -LiteralPath $sheet -Encoding UTF8 | ForEach-Object { Write-Host $_ }
 } else {
   Write-Host ("cheatsheet.txt missing: " + $sheet) -ForegroundColor Red
-  Write-Host "Expected next to cheatsheet.ps1 under .config\wezterm\workbench\" -ForegroundColor DarkYellow
+  Write-Host "Expected next to cheatsheet.ps1 under .config\wezterm\workbench\" -ForegroundColor DarkCyan
 }
 
 Write-Host ""

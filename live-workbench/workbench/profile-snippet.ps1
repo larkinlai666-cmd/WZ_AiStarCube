@@ -45,7 +45,7 @@ function wb {
       $kimiExe = Join-Path $kimiBin 'kimi.exe'
       if (Test-Path $kimiExe) { Write-Host '== kimi ==' -ForegroundColor Cyan; & $kimiExe --version; $checked = $true }
       if (Get-Command codex -ErrorAction SilentlyContinue) { Write-Host '== codex ==' -ForegroundColor Cyan; codex --version; $checked = $true }
-      if (-not $checked) { Write-Host 'no agent CLI found (grok/kimi/codex)' -ForegroundColor Yellow }
+      if (-not $checked) { Write-Host 'no agent CLI found (grok/kimi/codex/deepseek)' -ForegroundColor DarkCyan }
     }
     'home'   { Set-Location $env:USERPROFILE }
     'config' { Set-Location (Join-Path $env:USERPROFILE '.config\wezterm') }

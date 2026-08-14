@@ -303,8 +303,10 @@ function M.first_gui_window_id()
 end
 
 function M.apply(config)
-  -- R1: never advertise "Grok new chat @ home" as a project workspace.
-  -- Real work starts from Init panel (bind project) or F9 → F6.
+  -- R1/M2-6: never advertise bare agent sessions @ home — an agent's identity
+  -- must be a bound project (D-003). Real work starts from the Init panel;
+  -- the only escapes below are plain shells. (grok/kimi/codex/deepseek
+  -- @home entries removed 2026-08-14; grok dashboard kept as non-project panel)
   config.launch_menu = {
     {
       label = "★ WZ 任务初始化面板（选/建项目后再开 AI）",
@@ -319,21 +321,6 @@ function M.apply(config)
     {
       label = "■ PowerShell（纯 shell，无初始化面板）",
       args = M.powershell,
-      cwd = home,
-    },
-    {
-      label = "◆ Kimi",
-      args = M.kimi_args(),
-      cwd = home,
-    },
-    {
-      label = "◎ Codex",
-      args = M.codex_args(),
-      cwd = home,
-    },
-    {
-      label = "◇ DeepSeek",
-      args = M.deepseek_args(),
       cwd = home,
     },
     {

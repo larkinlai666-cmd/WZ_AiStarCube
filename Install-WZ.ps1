@@ -36,36 +36,48 @@ function Write-Step([string]$Msg, [string]$Color = "Cyan") {
 }
 
 function Write-Ok([string]$Msg) { Write-Host "  OK  $Msg" -ForegroundColor Green }
-function Write-Warn([string]$Msg) { Write-Host "  !!  $Msg" -ForegroundColor Yellow }
+function Write-Warn([string]$Msg) { Write-Host "  !!  $Msg" -ForegroundColor DarkCyan }
 function Write-Bad([string]$Msg) { Write-Host "  XX  $Msg" -ForegroundColor Red }
 
 function Test-CommandExists([string]$Name) {
   return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
-# Agents are peers (grok / kimi / codex) — none is a hard prerequisite.
+# Agents are peers (grok / kimi / codex / deepseek) — none is a hard prerequisite.
 # Resolve order per agent: PATH first, then well-known install locations.
-# Note: LOCALAPPDATA / ProgramFiles can be EMPTY in stripped environments
-# (spawned shells, CI) — Join-Path $null crashes the whole Doctor.
+# Note: USERPROFILE / APPDATA / LOCALAPPDATA / ProgramFiles can be EMPTY in
+# stripped environments (spawned shells, CI) — Join-Path $null crashes the
+# whole Doctor.
 function Resolve-AgentExe([string]$Name) {
   $cmd = Get-Command $Name -ErrorAction SilentlyContinue
   if ($cmd -and $cmd.Source -and (Test-Path -LiteralPath $cmd.Source)) { return $cmd.Source }
   $candidates = @()
   $la = $env:LOCALAPPDATA
+  $up = $env:USERPROFILE
+  $ad = $env:APPDATA
   switch ($Name) {
     'grok' {
-      $candidates += (Join-Path $env:USERPROFILE ".grok\bin\grok.exe")
+      if ($up) { $candidates += (Join-Path $up ".grok\bin\grok.exe") }
       if ($la) { $candidates += (Join-Path $la "Programs\grok\grok.exe") }
     }
     'kimi' {
-      $candidates += (Join-Path $env:USERPROFILE ".kimi-code\bin\kimi.exe")
-      $candidates += (Join-Path $env:USERPROFILE ".kimi-code\bin\kimi.cmd")
+      if ($up) {
+        $candidates += (Join-Path $up ".kimi-code\bin\kimi.exe")
+        $candidates += (Join-Path $up ".kimi-code\bin\kimi.cmd")
+      }
     }
     'codex' {
       # WinGet shim links (codex is typically a .cmd shim here)
       if ($la) {
         $candidates += (Join-Path $la "Microsoft\WinGet\Links\codex.exe")
         $candidates += (Join-Path $la "Microsoft\WinGet\Links\codex.cmd")
+      }
+    }
+    'deepseek' {
+      # npm global install (@kavienw/deepseek-cli) → %APPDATA%\npm\deepseek.cmd
+      if ($ad) {
+        $candidates += (Join-Path $ad "npm\deepseek.cmd")
+        $candidates += (Join-Path $ad "npm\deepseek.exe")
       }
     }
   }
@@ -106,22 +118,22 @@ function Invoke-Doctor {
     $fail++
   }
 
-  # Agents are peers: at least ONE of grok/kimi/codex must be usable.
-  # A missing grok only warns — kimi/codex-only setups are fully supported.
+  # Agents are peers: at least ONE of grok/kimi/codex/deepseek must be usable.
+  # A missing grok only warns — kimi/codex/deepseek-only setups are fully supported.
   $foundAgents = @()
-  foreach ($a in @('grok', 'kimi', 'codex')) {
+  foreach ($a in @('grok', 'kimi', 'codex', 'deepseek')) {
     $exe = Resolve-AgentExe $a
     if ($exe) {
       Write-Ok "$a CLI: $exe"
       $foundAgents += $a
     } elseif ($a -eq 'grok') {
-      Write-Warn "grok CLI not found — fine if you only use kimi/codex (可只用 kimi/codex)"
+      Write-Warn "grok CLI not found — fine if you only use kimi/codex/deepseek (可只用 kimi/codex/deepseek)"
     } else {
       Write-Warn "$a CLI not found"
     }
   }
   if ($foundAgents.Count -eq 0) {
-    Write-Bad "No agent CLI found (grok / kimi / codex). Install at least one."
+    Write-Bad "No agent CLI found (grok / kimi / codex / deepseek). Install at least one."
     Write-Warn "Workbench UI still installs; AI tabs need an agent CLI to be useful."
     $fail++
   }
@@ -243,10 +255,10 @@ function Bind-ThisRepo {
     $name = "WZ_AiStarCube"
   }
   # Unified semantics with open-project.ps1: the row we BIND gets an explicit
-  # 3rd agent column (first available of grok/kimi/codex). Rows we did not
+  # 3rd agent column (first available of grok/kimi/codex/deepseek). Rows we did not
   # touch keep whatever they had (legacy 2-column rows stay 2-column).
   $bindAgent = ""
-  foreach ($a in @('grok', 'kimi', 'codex')) {
+  foreach ($a in @('grok', 'kimi', 'codex', 'deepseek')) {
     if (Resolve-AgentExe $a) { $bindAgent = $a; break }
   }
   $roots = Join-Path $WbDst "desk-roots.tsv"
@@ -278,7 +290,7 @@ function Bind-ThisRepo {
   if ($bindAgent) { $agentMap[$name] = $bindAgent }
   $out = @(
     "# AI STAR CUBE desk roots - project_name<TAB>absolute_path[<TAB>agent]",
-    "# Bound by Install-WZ.ps1 — optional 3rd column agent: grok / kimi / codex (peers)"
+    "# Bound by Install-WZ.ps1 — optional 3rd column agent: grok / kimi / codex / deepseek (peers)"
   )
   foreach ($k in ($map.Keys | Sort-Object)) {
     if ($agentMap.Contains($k)) {
@@ -328,7 +340,7 @@ Install-Workbench
 Bind-ThisRepo
 $fail = Invoke-Doctor
 
-Write-Step "Next steps" "Yellow"
+Write-Step "Next steps" "Cyan"
 Write-Host @"
   1. Restart WezTerm (or press Ctrl+Shift+R to reload config).
   2. You should land on the Init panel (task table).
@@ -343,8 +355,8 @@ Write-Host @"
 
 if ($fail -gt 0) {
   Write-Host ""
-  Write-Host "Install finished with $fail doctor warning(s). Fix prerequisites, then re-run:" -ForegroundColor Yellow
-  Write-Host "  powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1 -DoctorOnly" -ForegroundColor Yellow
+  Write-Host "Install finished with $fail doctor warning(s). Fix prerequisites, then re-run:" -ForegroundColor DarkCyan
+  Write-Host "  powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1 -DoctorOnly" -ForegroundColor Cyan
   exit 1
 }
 

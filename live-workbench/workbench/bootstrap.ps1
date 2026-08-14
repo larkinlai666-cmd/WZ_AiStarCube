@@ -1460,7 +1460,7 @@ function Show-Screen {
   $agTitle = if ($armRow) { '2 AGENT  << step 2 · pick agent for ' + $armRow.Project } else { '2 AGENT' }
   Write-BoxTop -Title $agTitle -Border $bAgt
   if ($peerList.Count -eq 0) {
-    Write-BoxLine -Text '(no grok/kimi/codex CLI detected)' -Fg DarkGray -Border $bAgt
+    Write-BoxLine -Text '(no grok/kimi/codex/deepseek CLI detected)' -Fg DarkGray -Border $bAgt
   } else {
     $aChipC = if ($agentActive) { [ConsoleColor]::Yellow } else { [ConsoleColor]::DarkGray }
     $aNameC = if ($agentActive) { [ConsoleColor]::White } else { [ConsoleColor]::Gray }
@@ -1609,17 +1609,19 @@ function Get-AgentSplashScript {
   # EVERY agent the Init walking cat (那只 loading 猫猫读条), not a static card.
   # Animated 5-frame splash (~300ms fixed window) painted by the wrapper BEFORE
   # the agent starts; the agent's own first paint then overwrites it. No
-  # readiness polling, no boot dependency. Single Yellow accent (色系唯一).
+  # readiness polling, no boot dependency. Single Magenta accent (D-013:
+  # decoration must NOT use the reserved input Yellow).
   # Redirected hosts (smoke tests) get one static frame — no cursor math there.
-  # Template is a SINGLE-quoted here-string: only __AGENT__/__PROJ__ tokens are
-  # substituted, so inner $__vars reach the spawned wrapper verbatim.
+  # Template is a SINGLE-quoted here-string: only the __WZ_SPLASH_*_7F3A__
+  # tokens are substituted (L2-7: unguessable tokens kill chain-replace
+  # hazards), so inner $__vars reach the spawned wrapper verbatim.
   param([string]$AgentLabel, [string]$Project)
   $al = $AgentLabel.Replace("'", "''")
   $pj = $Project.Replace("'", "''")
   $tpl = @'
 try { [Console]::Clear() } catch {}
-$__al = '__AGENT__'
-$__pj = '__PROJ__'
+$__al = '__WZ_SPLASH_AGENT_7F3A__'
+$__pj = '__WZ_SPLASH_PROJ_7F3A__'
 $__w = 80
 try { $__w = [Console]::WindowWidth } catch {}
 $__bw = [Math]::Min(44, [Math]::Max(16, $__w - 26))
@@ -1653,7 +1655,7 @@ for ($__f = 0; $__f -lt $__frames; $__f++) {
 }
 try { [Console]::Clear() } catch {}
 '@
-  return $tpl.Replace('__AGENT__', $al).Replace('__PROJ__', $pj)
+  return $tpl.Replace('__WZ_SPLASH_AGENT_7F3A__', $al).Replace('__WZ_SPLASH_PROJ_7F3A__', $pj)
 }
 
 function Get-AgentSplashSpawn {
@@ -2273,21 +2275,24 @@ function Build-InstalledAiCliOptions {
   if ($script:Grok -and (Test-Path -LiteralPath $script:Grok)) {
     Add-Cli -Id 'grok' -Label 'Grok Build CLI' -Exe ([string]$script:Grok) -Kind 'grok'
   }
-  foreach ($gp in @(
-      (Join-Path $env:USERPROFILE '.grok\bin\grok.exe'),
-      (Join-Path $env:LOCALAPPDATA 'Programs\grok\grok.exe')
-    )) {
+  # M2-2: same empty-env guards for the wizard's fallback probing
+  $gpList = @()
+  if ($env:USERPROFILE) { $gpList += (Join-Path $env:USERPROFILE '.grok\bin\grok.exe') }
+  if ($env:LOCALAPPDATA) { $gpList += (Join-Path $env:LOCALAPPDATA 'Programs\grok\grok.exe') }
+  foreach ($gp in $gpList) {
     if ($gp -and (Test-Path -LiteralPath $gp)) {
       Add-Cli -Id 'grok' -Label 'Grok Build CLI' -Exe $gp -Kind 'grok'
     }
   }
 
   # Kimi fallback paths when PATH resolution fails (D-004)
-  foreach ($kp in @(
-      (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi.exe'),
-      (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi.cmd'),
-      (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi')
-    )) {
+  $kpList = @()
+  if ($env:USERPROFILE) {
+    $kpList += (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi.exe')
+    $kpList += (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi.cmd')
+    $kpList += (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi')
+  }
+  foreach ($kp in $kpList) {
     if ($kp -and (Test-Path -LiteralPath $kp)) {
       Add-Cli -Id 'kimi' -Label 'Kimi Code CLI' -Exe $kp -Kind 'kimi'
     }
@@ -2332,7 +2337,10 @@ function Find-AgentExe {
       if ($cmd -and $cmd.Source -and (Test-Path -LiteralPath $cmd.Source)) { return [string]$cmd.Source }
     } catch {}
   }
-  if ($Id -eq 'kimi') {
+  # M2-2: env vars can be EMPTY in stripped shells (spawn/CI) — Join-Path on
+  # $null throws. Build fallback lists only when the var exists (Install-WZ's
+  # D-006 guard pattern, now applied here too).
+  if ($Id -eq 'kimi' -and $env:USERPROFILE) {
     foreach ($c in @(
         (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi.exe'),
         (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi.cmd'),
@@ -2344,11 +2352,13 @@ function Find-AgentExe {
   if ($Id -eq 'codex') {
     # WinGet/npm install locations when PATH resolution fails. NOTE: Get-Command
     # may resolve `codex` to a .cmd shim — callers (Start-CodexTab) host-wrap shims
-    foreach ($c in @(
-        (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\codex.exe'),
-        (Join-Path $env:LOCALAPPDATA 'Programs\codex\codex.exe'),
-        (Join-Path $env:USERPROFILE '.codex\bin\codex.exe')
-      )) {
+    $ccands = @()
+    if ($env:LOCALAPPDATA) {
+      $ccands += (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\codex.exe')
+      $ccands += (Join-Path $env:LOCALAPPDATA 'Programs\codex\codex.exe')
+    }
+    if ($env:USERPROFILE) { $ccands += (Join-Path $env:USERPROFILE '.codex\bin\codex.exe') }
+    foreach ($c in $ccands) {
       if ($c -and (Test-Path -LiteralPath $c)) { return $c }
     }
     # Real layout on this machine: WinGet Packages\OpenAI.Codex_*\codex.cmd
@@ -2363,7 +2373,7 @@ function Find-AgentExe {
       }
     } catch {}
   }
-  if ($Id -eq 'deepseek') {
+  if ($Id -eq 'deepseek' -and $env:APPDATA) {
     # npm global install (@kavienw/deepseek-cli) lands deepseek.cmd under
     # %APPDATA%\npm — on the USER PATH for every normally spawned shell.
     foreach ($c in @(
@@ -2423,6 +2433,13 @@ function Start-ProjectWithCli {
     return
   }
 
+  # L2-3 defense in depth: re-run the R1 gate here too — the wizard enforces
+  # strong paths upstream, but never launch an agent identity on a weak path.
+  if ($Kind -ne 'shell' -and -not (Test-StrongProjectPath -Cwd $Cwd)) {
+    Write-Host ("  GATE: refuse launch on weak path ({0}) — bind a strong project path" -f $Cwd) -ForegroundColor Red
+    return
+  }
+
   if ($Kind -eq 'shell') {
     if ($script:Wez -and (Test-WezAlive)) {
       & $script:Wez @('cli', 'spawn', '--cwd', $Cwd, '--', 'powershell.exe', '-NoLogo') 2>$null | Out-Null
@@ -2459,6 +2476,9 @@ function Start-ProjectWithCli {
     }
   }
   if ([string]::IsNullOrWhiteSpace($invoke)) { $invoke = $Id }
+  # M2-4: prefer the wizard-resolved exe path over a bare PATH name — a CLI
+  # found via fallback locations is NOT on PATH inside the spawned shell.
+  if ($Exe -and (Test-Path -LiteralPath $Exe)) { $invoke = [string]$Exe }
 
   $cwdEsc = $Cwd.Replace("'", "''")
   $invEsc = $invoke.Replace("'", "''")
@@ -3001,6 +3021,9 @@ while ($running) {
     }
     Write-Host -NoNewline ("  agent 1-{0} (Enter = {1} {2}, q = cancel) " -f $peerIds.Count, $defIdx, $peerIds[$defIdx - 1]) -ForegroundColor Yellow
     $line = Read-Host
+    # L2-2: stdin EOF (redirected host, input exhausted) — leave the panel
+    # cleanly instead of spinning on empty reads forever.
+    if ($null -eq $line) { break }
     $line = ([string]$line).Trim()
     if ($line -eq '') { Complete-AgentPick -Agent $peerIds[$defIdx - 1]; continue }
     if ($line -eq 'q' -or $line -eq 'Q') {
@@ -3024,6 +3047,8 @@ while ($running) {
   # ---- step 1: pick task / panel commands ----
   Write-Host -NoNewline '  wz> ' -ForegroundColor Yellow
   $line = Read-Host
+  # L2-2: stdin EOF — exit cleanly (see step-2 note above)
+  if ($null -eq $line) { break }
   $line = ([string]$line).Trim()
   if ($line -eq '') { continue }  # empty Enter: no state change → no repaint
   if ($line -eq 'q' -or $line -eq 'Q') {
@@ -3032,7 +3057,7 @@ while ($running) {
     break
   }
   if ($line -eq 'c' -or $line -eq 'C') { Invoke-NewTaskWizard; $script:ScreenDirty = $true; continue }
-  if ($line -eq 'r' -or $line -eq 'R') { $script:RowsDirty = $true; continue }
+  if ($line -eq 'r' -or $line -eq 'R') { $script:AgentPeers = $null; $script:RowsDirty = $true; continue }  # L2-5: re-detect installed agents too
   if ($line -eq 'a' -or $line -eq 'A') { $script:ShowAll = -not $script:ShowAll; $script:RowsDirty = $true; continue }
   if ($line -eq 's' -or $line -eq 'S') {
     if ($script:Wez -and (Test-WezAlive)) {
@@ -3062,6 +3087,14 @@ while ($running) {
     continue
   }
   if ($line -match '^\d+$') {
+    # M2-1: cap digit length — 11+ digits overflow [int] and dump a red error
+    # record that no repaint covers. Row numbers never exceed 2 digits (MaxRows
+    # 18), so >4 digits is always a mistake.
+    if ($line.Length -gt 4) {
+      $script:StatusHint = 'number too long — <num>=task · <t><a>=one-shot · q=quit'
+      $script:ScreenDirty = $true
+      continue
+    }
     # D-010 combo fast path: in the 9-row default view a two-digit input is
     # <task><agent> — gates still run (Invoke-RowPrimary), launch is immediate.
     if ($line.Length -eq 2 -and -not $script:ShowAll -and $script:Rows.Count -le 9) {
@@ -3086,6 +3119,12 @@ while ($running) {
   }
   if ($line -match '^[nN]\s*(\d+)$') {
     $digits = $Matches[1]
+    # M2-1: same length cap on the forced-new variant
+    if ($digits.Length -gt 4) {
+      $script:StatusHint = 'number too long — n<num>=new session · q=quit'
+      $script:ScreenDirty = $true
+      continue
+    }
     # D-010 combo, forced-new variant: n13 = task 1, agent 3, new session
     if ($digits.Length -eq 2 -and -not $script:ShowAll -and $script:Rows.Count -le 9) {
       $tIdx = [int]$digits.Substring(0, 1)
