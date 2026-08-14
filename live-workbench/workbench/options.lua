@@ -149,14 +149,16 @@ function M.apply(config)
   config.swallow_mouse_click_on_window_focus = true
 
   config.mouse_bindings = {
-    -- Plain click: finish selection only — do NOT open hyperlinks.
-    -- Accidental clicks on path text (wizard / agent logs) were opening
-    -- wrong apps (e.g. .cmd / trust-directory prompts). Intentional open:
-    -- Ctrl+Click or Middle-Click.
+    -- Plain click: open hyperlink when not drag-selecting (D-014).
+    -- CompleteSelectionOrOpenLinkAtMouseCursor keeps drag-select intact;
+    -- a bare click on a link opens it. Wrong-app risk is now handled
+    -- structurally instead: launcher extensions (.cmd/.exe/...) are never
+    -- hyperlinked (sidebar Write-ClickablePath guard + hyperlink_rules
+    -- safe-extension allowlist). Ctrl+Click / Middle-Click kept as aliases.
     {
       event = { Up = { streak = 1, button = "Left" } },
       mods = "NONE",
-      action = wezterm.action.CompleteSelection("Clipboard"),
+      action = wezterm.action.CompleteSelectionOrOpenLinkAtMouseCursor("Clipboard"),
     },
     {
       event = { Up = { streak = 1, button = "Left" } },

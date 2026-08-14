@@ -14,8 +14,8 @@
 - Capsule: CONTEXT.md
 - Coverage: CONTEXT.md
 - Blockers: none
-- Next: User: wezterm 完全重开后 live 终验 P-011 施工（① 启动菜单只剩 Init/grok dash/PS/CMD 四入口；② 超长数字手滑得「number too long」提示不脏屏）→ F6 三栏形态定夺 → 批准验收清单（P-006 → D）→ 逐项打勾 A1–C4.
-- Updated: 2026-08-14T15:56:00Z
+- Next: User: wezterm 完全重开后终验（① 侧栏单击文件/目录名直接打开，.cmd/.exe 纯文本用 `o N` 开；② 拖拽选择不受影响；③ 启动菜单四入口）→ F6 三栏形态定夺 → 批准验收清单（P-006 → D）→ 逐项打勾 A1–C4.
+- Updated: 2026-08-14T16:20:00Z
 - Device: SK-20240507HWFH
 
 ## Objective

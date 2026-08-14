@@ -217,7 +217,13 @@ function Write-ClickablePath {
     # Only use -ShowFullPath for DESK/VIEW header lines.
     [switch]$ShowFullPath
   )
-  $uri = ConvertTo-FileUri -PathValue $PathValue
+  # D-014: launcher extensions are never hyperlinked — with plain-click-open
+  # restored, an OSC-8 link on .cmd/.exe would execute via the OS open verb.
+  # These stay deliberately keyboard-openable (`o N` / bare `N`).
+  $script:LauncherExt = @('.exe', '.cmd', '.bat', '.com', '.scr', '.reg', '.vbs', '.vbe', '.lnk', '.msi')
+  $ext = ''
+  try { $ext = [System.IO.Path]::GetExtension($PathValue).ToLowerInvariant() } catch {}
+  $uri = if ($script:LauncherExt -contains $ext) { $null } else { ConvertTo-FileUri -PathValue $PathValue }
   $text = if ([string]::IsNullOrWhiteSpace($Label)) { $PathValue } else { $Label }
   Write-Hyperlink -Uri $uri -Text $text -Color $Color
   if ($ShowFullPath -and $PathValue -and $PathValue -ne $text) {

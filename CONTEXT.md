@@ -4,7 +4,7 @@
 
 - Methods: M-001, M-002, M-003
 - Facts: F-001, F-002, F-003, F-005, F-006, F-007, F-008, F-009, F-010, F-011, F-012, F-013, F-014
-- Decisions: D-001, D-002, D-003, D-004, D-005, D-006, D-007, D-008, D-009, D-010, D-011, D-012, D-013
+- Decisions: D-001, D-002, D-003, D-004, D-005, D-006, D-007, D-008, D-009, D-010, D-011, D-012, D-013, D-014
 - Sources: none
 - Assets: none
 - Components: C-ROOT, C-WB, C-REF-WEZ, C-SKILL, C-LAUNCH
@@ -34,8 +34,7 @@
 
 ## Working Assumptions
 
-- H-002: PPS at `G:\GrokProject\PPS_SKILL`; project `scripts/` lifecycle.
-- H-003: Live `~\.config\wezterm`; keep `live-workbench/` in sync.
+- H-002: PPS at `G:\GrokProject\PPS_SKILL`; project `scripts/` lifecycle. H-003: Live `~\.config\wezterm`; keep `live-workbench/` in sync.
 ## Current Risks
 
 - Home-cwd history not formal TASK.
@@ -73,7 +72,8 @@
 | D-011 | live `bootstrap.ps1` `Set-SpawnedTabTitle` 严格解析/日志 + DECISIONS D-011 | Present |
 | D-012 | live `bootstrap.ps1` Complete-AgentPick 成功即关 + `status.lua` argv 钉住 + cheatsheet | Present |
 | D-013 | live `bootstrap.ps1` Write-UiChoice/Write-BoxKeyRow 结构强制 + `sidebar.ps1` 配色归位 + DECISIONS D-013 | Present |
+| D-014 | live `options.lua` 单击开链接绑定 + `sidebar.ps1` launcher 护栏 + DECISIONS D-014 | Present |
 
 ## Next Action
 
-P-011 施工完成并回归全绿、已推送远端（M2-1~6 全修 + L 批 6 项；L2-4/6/8 留观察）。User: wezterm 完全重开后终验——启动菜单只剩 Init/grok dash/PS/CMD 四入口、超长数字手滑得提示不脏屏。随后 F6 三栏形态定夺（A/B/C）→ 批准验收清单（P-006 → D）→ 逐项打勾。M-3 留后续包。
+P-011 已施工并推送（b488faa）；D-014 单击开链接恢复 + launcher 护栏已落地并推送。User: wezterm 完全重开后终验——① 侧栏单击文件名/目录名直接打开（.cmd/.exe 行为纯文本，用 `o N` 键盘开）；② 拖拽选择文字不受影响；③ 启动菜单四入口。随后 F6 三栏形态定夺（A/B/C）→ 批准验收清单（P-006 → D）→ 逐项打勾。M-3 留后续包。

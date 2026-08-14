@@ -32,6 +32,7 @@
 - `D-011`
 - `D-012`
 - `D-013`
+- `D-014`
 <!-- PPS:ACTIVE:END -->
 
 ## Authority Records
@@ -279,7 +280,17 @@
 - Supersedes: COMMAND 区边框/字段行整行亮黄、sidebar KEYS 框亮黄边框等框体用色实践（框框禁黄后全部归 DarkGray）。
 - Affects: bootstrap.ps1（Write-UiChoice/Write-BoxKeyRow/splash/loading/wizard/COMMAND/提示符）、sidebar.ps1、后续一切新 UI。
 
+### D-014 [active]
+
+- Summary: **鼠标链接语义：普通单击打开超链接，拖拽选择不受影响；可执行（launcher）扩展永不生成超链接。** (1) options.lua 鼠标绑定：左键 Up(NONE) 从 `CompleteSelection`（只完成选区、拒开链接，08-09 误开 .cmd/信任目录事故的硬化产物）改为 `CompleteSelectionOrOpenLinkAtMouseCursor("Clipboard")`——有选区则完成选区，无选区且指针落在链接上则打开；Ctrl+Click / Middle-Click 保留为别名。(2) 结构性防误开：sidebar.ps1 `Write-ClickablePath` 对 launcher 扩展集（.exe/.cmd/.bat/.com/.scr/.reg/.vbs/.vbe/.lnk/.msi）不生成 OSC-8（渲染为纯文本，外观不变），此类对象只能经键盘 `o N` / 裸 `N` 显式打开；hyperlinks.lua 的路径模式规则本就只匹配安全扩展白名单（.md/.ts/.py/...），全局无双击执行面。(3) 全链路审计：OSC-8 唯一发射口为 sidebar `Write-ClickablePath`（文件行/VIEW 头/DESK 头三个调用点），护栏一处生效全覆盖。
+- Source: 用户 2026-08-14 16:06「侧边文件夹的对象又不可以点击了，修复，审查，加固，推送远端」。
+- Scope: live workbench options.lua 鼠标绑定、sidebar.ps1 链接发射；后续一切终端可点击内容。
+- Supersedes: 08-09 起的「普通单击拒开链接」硬化（`CompleteSelection`）。
+- Affects: options.lua（mouse_bindings）、sidebar.ps1（Write-ClickablePath launcher 护栏）、prototypes/hardening-smoke/test-sidebar-link.ps1（回归用例）。
+
 ## Status Events
+
+- 2026-08-14: **侧边栏不可点击根查明 + D-014 落地：单击开链接恢复 + launcher 扩展结构性去链接。** 根因：非代码回归——发射链路（OSC-8/Write-ClickablePath/字节结构）实测完好，是 08-09 的硬化把普通单击改为只完成选区（当时的动机是误点 .cmd/信任目录），Ctrl+Click/中键一直是唯一入口，用户体感为「又不能点了」。修复（用户指令）+ 加固双轨：(1) options.lua 左键 Up 改 `CompleteSelectionOrOpenLinkAtMouseCursor`——拖选语义保留、单击链接直接打开（已用 show-keys 实测该 action 在本机 wezterm 20240203 真实注册）；(2) sidebar `Write-ClickablePath` 加 launcher 扩展护栏（.exe/.cmd/.bat/.com/.scr/.reg/.vbs/.vbe/.lnk/.msi 渲染为纯文本不生成链接），可执行对象只能键盘 `o N` 显式打开——原始误开顾虑被结构性消除，而非靠禁用交互。审查：全仓 OSC-8 发射口唯一化确认（sidebar 三调用点全覆盖）；hyperlinks.lua 安全扩展白名单复核无双击执行面；`swallow_mouse_click_on_pane_focus=false` 使未聚焦侧栏首击即开（顺带聚焦），符合直觉。回归：test-sidebar-link.ps1 新用例 ALL PASS（普通文件 OSC-8 结构良好 / 4 个 launcher 扩展零链接 / 目录仍可点）；bom-and-parse 重挂 parse 0×2；真实配置 ls-fonts exit=0 + show-keys 6 处注册；options.lua 配平 OK；live↔镜像 md5 一致。**待用户 live 终验**：wezterm 完全重开（options.lua 是模块文件，自动重载不盯）后——侧栏单击文件/目录名直接打开，.cmd/.exe 行仍为纯文本，拖拽选择文字不受影响。
 
 - 2026-08-14: **P-011 加固 R2 施工完成 + 全量回归绿 + 推送远端。** 施工范围 = 用户批准的全量（M2-1~M2-5 全修、M2-6 按 A 移除三个裸 agent @ home 入口、L2-1/2/3/5/7/9 随清；L2-4/6/8 留观察）。bootstrap.ps1：M2-1 两处数字分支 `$line.Length -gt 4` 上限 + StatusHint/ScreenDirty（step-2 本就 TryParse 无患，回归实证）；M2-2 Find-AgentExe kimi/codex/deepseek 空环境变量护栏 + Build-InstalledAiCliOptions 条件数组；M2-4 向导 spawn 改用已解析 `$Exe` 全路径；L2-2 两个 Read-Host 后 `$null -eq $line → break`（EOF 防死循环）；L2-3 非 shell 分支补 R1 复验；L2-5 `r` 键清 `$script:AgentPeers` 缓存；L2-1 splash 注释 Magenta 归位；L2-7 splash 令牌改罕见串 `__WZ_SPLASH_*_7F3A__`；L2-9 零 agent 提示补 deepseek。Install-WZ.ps1：M2-3 Resolve-AgentExe deepseek 分支 + Doctor/绑定列四平权 + 注释；M2-5 四处 Yellow 归位（Write-Warn/Next steps/警告行 → DarkCyan/Cyan）。open-project.ps1 三处 + profile-snippet/cheatsheet/load_guard 各其位 Yellow/DarkYellow → DarkCyan/Cyan。launch.lua：M2-6(A) launch_menu 删 ◆ Kimi/◎ Codex/◇ DeepSeek @home 三块（保留 Init/grok dashboard/PowerShell/CMD）。回归：BOM 重挂 parse 0×2；管道冒烟 q / 2qq / 99999999999（得「number too long」提示而非红错误）/ 空 stdin（干净退出不空转）/ step-2 超长（TryParse 优雅「no such agent」）exit 全 0；零 agent S1/S3 渲染干净 + 兜底提示 + not found；宽度模态 psw=100 仅回显行偏差；lua 配平 10/10；splash 单测 ALL PASS×2；ls-fonts exit=0；live↔镜像 10 文件 md5 全一致；残留 Yellow 终审全部为输入前缀（wz>/agent 1-N/explorer>/wizard 提示符）= D-013 有意保留。**待用户 live 终验**：启动菜单只剩四个干净入口；超长数字手滑不再脏屏。
 
