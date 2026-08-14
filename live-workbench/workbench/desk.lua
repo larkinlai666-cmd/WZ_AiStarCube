@@ -3,7 +3,8 @@
 -- ============================================================================
 -- HARD RULES (gates · keep in sync with bootstrap.ps1)
 -- ============================================================================
--- R1  Grok sessions for real work MUST launch with --cwd <strong project path>.
+-- R1  AI sessions for real work MUST launch on a strong project path
+--     (grok: --cwd; codex: -C/--cd; kimi: process cwd only — no cwd flag).
 --     Shell `cd` never becomes the session identity.
 -- R2  Weak / system paths are NEVER a project root:
 --     USERPROFILE, Desktop, Documents root, Downloads, AppData, Temp, Windows.
@@ -88,6 +89,9 @@ function M.path_under(child, root)
   return a:sub(1, #b + 1) == b .. "\\"
 end
 
+--- Agent home dirs are tool state, never projects (R2 · D-004: all peers)
+local AGENT_HOME_DIRS = { ".grok", ".kimi", ".kimi-code", ".codex", ".deepseek-cli", ".deepseek" }
+
 --- Reserved binding names that must never be treated as real projects
 local RESERVED_NAMES = {
   home = true,
@@ -103,10 +107,12 @@ local RESERVED_NAMES = {
   windows = true,
   system32 = true,
   config = true,
-  [".grok"] = true,
   [".config"] = true,
   wezterm = true,
 }
+for _, d in ipairs(AGENT_HOME_DIRS) do
+  RESERVED_NAMES[d] = true
+end
 
 function M.is_reserved_name(name)
   if not name or name == "" then
@@ -137,11 +143,14 @@ function M.is_weak_path(path)
       hl .. "\\videos",
       hl .. "\\onedrive",
       hl .. "\\.config",
-      hl .. "\\.grok",
       hl .. "\\.config\\wezterm",
-      hl .. "\\.grok\\bin",
-      hl .. "\\.grok\\sessions",
     }
+    -- Agent home dirs + their state subdirs (D-004: all peers, same rule)
+    for _, d in ipairs(AGENT_HOME_DIRS) do
+      table.insert(weak_exact, hl .. "\\" .. d)
+      table.insert(weak_exact, hl .. "\\" .. d .. "\\bin")
+      table.insert(weak_exact, hl .. "\\" .. d .. "\\sessions")
+    end
     for _, w in ipairs(weak_exact) do
       if pl == w then
         return true
@@ -257,7 +266,9 @@ function M.is_ai_process(name)
     return false
   end
   name = name:lower()
-  return name:find("grok", 1, true) ~= nil or name:find("codex", 1, true) ~= nil
+  return name:find("grok", 1, true) ~= nil
+    or name:find("codex", 1, true) ~= nil
+    or name:find("kimi", 1, true) ~= nil
 end
 
 function M.is_explorer_process(name, pane)
@@ -431,18 +442,30 @@ function M.best_task_root_in_tab(window, pane)
   return best_ai or best_any
 end
 
-local function read_map()
-  local map = {}
+--- desk-roots.tsv readers (D-004: optional 3rd TAB column = agent).
+--- M-2: HUD (update-status 500ms) + format-tab-title call these per repaint;
+--- a short TTL cache collapses repeat file IO to ~1 read/sec. WRITE paths
+--- (set_root/write_map) always parse FRESH so a rewrite never resurrects or
+--- clobbers rows written by sidebar.ps1/bootstrap.ps1 inside the TTL window.
+local roots_cache = { t = 0, map = nil, agents = nil }
+local ROOTS_CACHE_TTL_SEC = 2
+
+local function parse_roots()
+  local map, agents = {}, {}
   local f = io.open(roots_file, "r")
   if not f then
-    return map
+    return map, agents
   end
   for line in f:lines() do
     -- strip UTF-8 BOM
     line = line:gsub("^\239\187\191", "")
     line = line:match("^%s*(.-)%s*$") or ""
     if line ~= "" and not line:match("^#") then
-      local ws, path = line:match("^([^\t]+)\t+(.+)$")
+      -- 2 or 3 TAB columns: agent (if any) must NOT bleed into the path
+      local ws, path, agent = line:match("^([^\t]+)\t+([^\t]+)\t+(.+)$")
+      if not ws then
+        ws, path = line:match("^([^\t]+)\t+([^\t]+)")
+      end
       if not ws then
         ws, path = line:match("^(%S+)%s+(.+)$")
       end
@@ -452,11 +475,39 @@ local function read_map()
         if path and M.is_strong_path(path) and not M.is_reserved_name(ws) then
           map[ws] = path
         end
+        if agent then
+          agent = agent:match("^%s*(.-)%s*$") or ""
+          if agent ~= "" then
+            agents[ws] = agent:lower()
+          end
+        end
       end
     end
   end
   f:close()
+  return map, agents
+end
+
+local function read_map(fresh)
+  if not fresh then
+    local now = os.time()
+    if roots_cache.map and (now - roots_cache.t) < ROOTS_CACHE_TTL_SEC then
+      return roots_cache.map
+    end
+  end
+  local map, agents = parse_roots()
+  roots_cache.t = os.time()
+  roots_cache.map = map
+  roots_cache.agents = agents
   return map
+end
+
+local function read_agent_map()
+  if roots_cache.agents and (os.time() - roots_cache.t) < ROOTS_CACHE_TTL_SEC then
+    return roots_cache.agents
+  end
+  read_map()
+  return roots_cache.agents
 end
 
 local function write_map(map)
@@ -464,13 +515,15 @@ local function write_map(map)
   -- Do NOT use wezterm.run_child_process for mkdir: even at event-time it is
   -- heavy; at config-load it is fatal ("yield across a C-call boundary").
   -- If the directory is missing, io.open fails and caller can toast.
-  local f = io.open(roots_file, "w")
-  if not f then
-    return false
-  end
-  f:write("# AI STAR CUBE desk roots — project_name<TAB>absolute_path\n")
-  f:write("# 项目名(绑定名) 与 项目路径 的写死绑定；Explorer / 状态栏 / F6 / Init 共用\n")
-  f:write("# 弱路径(home/Desktop/…)与保留名不得写入；创建项目时一次写死\n")
+  -- D-005: read existing agent column BEFORE truncating so rewrites keep it —
+  -- FRESH parse, never the cache (a sidebar write inside the TTL would be lost).
+  local _, agents = parse_roots()
+  local lines = {
+    "# AI STAR CUBE desk roots — project_name<TAB>absolute_path[<TAB>agent]",
+    "# 项目名(绑定名) 与 项目路径 的写死绑定；Explorer / 状态栏 / F6 / Init 共用",
+    "# 弱路径(home/Desktop/…)与保留名不得写入；创建项目时一次写死",
+    "# 第三列 agent 显式写出（含 grok 缺省）: grok / kimi / codex / deepseek (D-004/D-005/F-014)",
+  }
   local keys = {}
   for k in pairs(map) do
     table.insert(keys, k)
@@ -479,11 +532,67 @@ local function write_map(map)
   for _, ws in ipairs(keys) do
     local p = M.normalize(map[ws])
     if p and M.is_strong_path(p) and not M.is_reserved_name(ws) then
-      f:write(ws .. "\t" .. p .. "\n")
+      -- D-005: ALWAYS write the 3rd column explicitly (grok included).
+      -- Dropping it let the row drift to first-installed agent after an
+      -- uninstall — silent binding change. Readers tolerate 2-col legacy.
+      local a = agents[ws]
+      if not a or a == "" then
+        a = "grok"
+      end
+      table.insert(lines, ws .. "\t" .. p .. "\t" .. a)
     end
   end
+  -- L-3: atomic temp+rename — never truncate the bindings file in place
+  -- (a crash mid-write used to lose every desk binding).
+  local tmp = roots_file .. ".tmp"
+  local f = io.open(tmp, "w")
+  if not f then
+    return false
+  end
+  f:write(table.concat(lines, "\n"))
+  f:write("\n")
   f:close()
-  return true
+  os.remove(roots_file) -- Windows rename() refuses an existing target
+  local ok = os.rename(tmp, roots_file)
+  if not ok then
+    -- fallback: copy contents back, never leave only a .tmp behind
+    local r = io.open(tmp, "r")
+    local content = r and r:read("*a")
+    if r then
+      r:close()
+    end
+    local w = content and io.open(roots_file, "w")
+    if w then
+      w:write(content)
+      w:close()
+      ok = true
+    end
+    os.remove(tmp)
+  end
+  if ok then
+    -- cache is now exactly what we wrote
+    roots_cache.t = os.time()
+    roots_cache.map = map
+    roots_cache.agents = agents
+  end
+  return ok and true or false
+end
+
+--- D-004: default agent for a binding name; nil = grok (缺省)
+function M.agent_for_name(name)
+  if not name or name == "" then
+    return nil
+  end
+  return read_agent_map()[name]
+end
+
+--- D-004: default agent for a task root path (via binding name); nil = grok
+function M.agent_for_path(path)
+  local name = M.name_for_path(path)
+  if not name then
+    return nil
+  end
+  return M.agent_for_name(name)
 end
 
 --- Reverse lookup: absolute path → desk-roots binding name (R3 / R6)
@@ -589,7 +698,7 @@ function M.set_root(workspace, path)
     return true
   end
 
-  local map = read_map()
+  local map = read_map(true) -- FRESH: a write path must see concurrent file writes
   -- same path already under another name → keep one binding (caller name wins)
   local pl = path:lower()
   for k, p in pairs(map) do
@@ -1083,8 +1192,14 @@ function M.role_for_process(name)
   if name:find("grok") then
     return "AI·Grok"
   end
+  if name:find("kimi") then
+    return "AI·Kimi"
+  end
   if name:find("codex") then
     return "AI·Codex"
+  end
+  if name:find("deepseek") then
+    return "AI·DeepSeek"
   end
   if name:find("cheatsheet") then
     return "help"

@@ -1,5 +1,5 @@
 ﻿# AI STAR CUBE Explorer — bound to task workspace (WS) + desk root (DESK)
-# Open: F7  or  Leader Alt+z then e  (window-local; not system-global)
+# Open: F7  (window-local; not system-global)
 
 
 param(
@@ -52,7 +52,8 @@ function Read-DeskRootFromFile {
   foreach ($line in Get-Content -LiteralPath $script:RootsFile -ErrorAction SilentlyContinue) {
     $t = $line.Trim()
     if ($t -eq '' -or $t.StartsWith('#')) { continue }
-    $parts = $t -split "`t", 2
+    # D-004: tolerate optional 3rd TAB column (agent)
+    $parts = $t -split "`t"
     if ($parts.Count -lt 2) {
       $parts = $t -split '\s+', 2
     }
@@ -65,29 +66,54 @@ function Read-DeskRootFromFile {
 
 function Write-DeskRootToFile {
   param([string]$Ws, [string]$PathValue)
+  # H-2 / R5: this writer is a hard gate too (was the side door around
+  # desk.lua set_root) — reserved names / weak paths never persist.
+  if (Test-ReservedName -Name $Ws) { return $false }
+  if (Test-WeakPath -Cwd $PathValue) { return $false }
   $dir = Split-Path $script:RootsFile -Parent
   if (-not (Test-Path -LiteralPath $dir)) {
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
   }
   $map = @{}
+  $agentMap = @{}
   if (Test-Path -LiteralPath $script:RootsFile) {
     foreach ($line in Get-Content -LiteralPath $script:RootsFile -ErrorAction SilentlyContinue) {
       $t = $line.Trim()
       if ($t -eq '' -or $t.StartsWith('#')) { continue }
-      $parts = $t -split "`t", 2
+      # D-004: keep optional 3rd TAB column (agent) on rewrite
+      $parts = $t -split "`t"
       if ($parts.Count -lt 2) { $parts = $t -split '\s+', 2 }
-      if ($parts.Count -ge 2) { $map[$parts[0]] = $parts[1] }
+      if ($parts.Count -ge 2) {
+        $map[$parts[0]] = $parts[1]
+        if ($parts.Count -ge 3 -and $parts[2].Trim()) {
+          $agentMap[$parts[0]] = $parts[2].Trim().ToLowerInvariant()
+        }
+      }
     }
   }
   $map[$Ws] = $PathValue
   $out = @(
-    '# AI STAR CUBE desk roots — workspace_name<TAB>absolute_path',
-    '# 任务工作区名 与 任务根目录 的绑定；Explorer / 状态栏 / F6 共用'
+    '# AI STAR CUBE desk roots — workspace_name<TAB>absolute_path[<TAB>agent]',
+    '# 任务工作区名 与 任务根目录 的绑定；Explorer / 状态栏 / F6 共用',
+    '# 第三列 agent 显式写出（含 grok 缺省）: grok / kimi / codex (D-004/D-005)'
   )
   foreach ($k in ($map.Keys | Sort-Object)) {
-    $out += ($k + "`t" + $map[$k])
+    # R2/R5 parity with desk.lua write_map: rewrite drops weak/reserved rows
+    if (Test-ReservedName -Name $k) { continue }
+    if (Test-WeakPath -Cwd $map[$k]) { continue }
+    # D-005: ALWAYS write the 3rd column explicitly (grok included) —
+    # dropping it let the row drift to first-installed agent after uninstall.
+    $a = 'grok'
+    if ($agentMap.Contains($k) -and [string]$agentMap[$k]) {
+      $a = ([string]$agentMap[$k]).Trim().ToLowerInvariant()
+    }
+    $out += ($k + "`t" + $map[$k] + "`t" + $a)
   }
-  Set-Content -LiteralPath $script:RootsFile -Value $out -Encoding UTF8
+  # L-3: atomic temp+move — never truncate the bindings file in place
+  $tmp = $script:RootsFile + '.tmp'
+  Set-Content -LiteralPath $tmp -Value $out -Encoding UTF8
+  Move-Item -LiteralPath $tmp -Destination $script:RootsFile -Force
+  return $true
 }
 
 $script:Wez = Get-WeztermExe
@@ -269,12 +295,12 @@ function Move-ToParent {
   $from = $script:Cwd
   $parent = Get-ParentPath -PathValue $script:Cwd
   if (-not $parent) {
-    Write-Host '  已在盘符根目录，没有更上一级' -ForegroundColor DarkYellow
+    Write-Host '  已在盘符根目录，没有更上一级' -ForegroundColor DarkCyan
     Start-Sleep -Seconds 0.7
     return $false
   }
   if ((Normalize-PathKey $parent) -eq (Normalize-PathKey $from)) {
-    Write-Host '  无法再向上' -ForegroundColor DarkYellow
+    Write-Host '  无法再向上' -ForegroundColor DarkCyan
     Start-Sleep -Seconds 0.7
     return $false
   }
@@ -283,7 +309,7 @@ function Move-ToParent {
   Write-Host ("  ↑ VIEW  {0}" -f $from) -ForegroundColor DarkGray
   Write-Host ("  →      {0}" -f $script:Cwd) -ForegroundColor Green
   if ($leftDesk) {
-    Write-Host '  (已离开任务根 DESK 树；按 s 回到 DESK)' -ForegroundColor DarkYellow
+    Write-Host '  (已离开任务根 DESK 树；按 s 回到 DESK)' -ForegroundColor DarkCyan
   }
   Start-Sleep -Milliseconds 350
   return $true
@@ -306,8 +332,9 @@ function ConvertFrom-FullwidthDigits {
 }
 
 # Color / zone standard (aligned with Init panel)
-#   HEADER DarkGray | LIST Cyan | LOCATION Green | COMMAND Yellow
-#   Keys Yellow highlight | body Gray/White | meta DarkGray | error Red | select Green
+#   HEADER DarkGray | LIST Cyan | LOCATION Green | COMMAND DarkGray (frames never Yellow)
+#   Yellow = RESERVED input affordance: key chips + input prefixes ( >_ / explorer>)
+#   body Gray/White | meta DarkGray | error Red | select Green
 
 function Get-UiWidth {
   # Fill the explorer pane (opened ~21% of window). Cap for long-name safety.
@@ -522,7 +549,7 @@ function Write-BoxText {
 }
 
 function Write-BoxKeyParts {
-  param([ConsoleColor]$Border = [ConsoleColor]::Yellow, [object[]]$Parts)
+  param([ConsoleColor]$Border = [ConsoleColor]::DarkGray, [object[]]$Parts)
   $inner = Get-InnerWidth
   Write-Host -NoNewline '  |' -ForegroundColor $Border
   Write-Host -NoNewline ' ' -ForegroundColor Gray
@@ -600,36 +627,36 @@ function Show-Help {
   Write-BoxTop -Title 'EXPLORER HELP' -Border DarkGray
   Write-BoxText -Text 'WS=task name  DESK=task root  VIEW=browse path' -Fg DarkGray
   Write-BoxBottom -Border DarkGray
-  Write-BoxTop -Title 'KEYS' -Border Yellow
-  Write-BoxKeyParts -Border Yellow -Parts @(
+  Write-BoxTop -Title 'KEYS' -Border DarkGray
+  Write-BoxKeyParts -Border DarkGray -Parts @(
     @{ T = '[ r ]'; C = [ConsoleColor]::Yellow }, @{ T = ' refresh now (no F4/F7)'; C = [ConsoleColor]::White }
   )
-  Write-BoxKeyParts -Border Yellow -Parts @(
+  Write-BoxKeyParts -Border DarkGray -Parts @(
     @{ T = '[ a ]'; C = [ConsoleColor]::Yellow }, @{ T = ' toggle auto-refresh on/off'; C = [ConsoleColor]::Gray }
   )
-  Write-BoxKeyParts -Border Yellow -Parts @(
+  Write-BoxKeyParts -Border DarkGray -Parts @(
     @{ T = '[ 0 / .. / u ]'; C = [ConsoleColor]::Yellow }, @{ T = ' parent dir'; C = [ConsoleColor]::Gray }
   )
-  Write-BoxKeyParts -Border Yellow -Parts @(
+  Write-BoxKeyParts -Border DarkGray -Parts @(
     @{ T = '[ 1..N ]'; C = [ConsoleColor]::Yellow }, @{ T = ' enter folder / open file'; C = [ConsoleColor]::Gray }
   )
-  Write-BoxKeyParts -Border Yellow -Parts @(
+  Write-BoxKeyParts -Border DarkGray -Parts @(
     @{ T = '[ s ]'; C = [ConsoleColor]::Yellow }, @{ T = ' back to DESK root'; C = [ConsoleColor]::Gray }
   )
-  Write-BoxKeyParts -Border Yellow -Parts @(
-    @{ T = '[ g ]'; C = [ConsoleColor]::Yellow }, @{ T = ' Grok@VIEW   '; C = [ConsoleColor]::Gray },
-    @{ T = '[ gd ]'; C = [ConsoleColor]::Yellow }, @{ T = ' Grok@DESK'; C = [ConsoleColor]::White }
+  Write-BoxKeyParts -Border DarkGray -Parts @(
+    @{ T = '[ g ]'; C = [ConsoleColor]::Yellow }, @{ T = ' AI@VIEW     '; C = [ConsoleColor]::Gray },
+    @{ T = '[ gd ]'; C = [ConsoleColor]::Yellow }, @{ T = ' AI@DESK  '; C = [ConsoleColor]::White }
   )
-  Write-BoxKeyParts -Border Yellow -Parts @(
+  Write-BoxKeyParts -Border DarkGray -Parts @(
     @{ T = '[ b ]'; C = [ConsoleColor]::Yellow }, @{ T = ' bind VIEW as DESK   '; C = [ConsoleColor]::Gray },
     @{ T = '[ w ]'; C = [ConsoleColor]::Yellow }, @{ T = ' shell tab'; C = [ConsoleColor]::Gray }
   )
-  Write-BoxKeyParts -Border Yellow -Parts @(
+  Write-BoxKeyParts -Border DarkGray -Parts @(
     @{ T = '[ p ]'; C = [ConsoleColor]::Yellow }, @{ T = ' copy path  '; C = [ConsoleColor]::DarkGray },
     @{ T = '[ f ]'; C = [ConsoleColor]::Yellow }, @{ T = ' favorite  '; C = [ConsoleColor]::DarkGray },
     @{ T = '[ q ]'; C = [ConsoleColor]::Yellow }, @{ T = ' quit'; C = [ConsoleColor]::DarkGray }
   )
-  Write-BoxBottom -Border Yellow
+  Write-BoxBottom -Border DarkGray
   Write-Host '  Enter to return...' -ForegroundColor DarkGray
 }
 
@@ -641,7 +668,7 @@ function Show-Listing {
   $bHead = [ConsoleColor]::DarkGray
   $bLoc  = [ConsoleColor]::Green
   $bList = [ConsoleColor]::Cyan
-  $bCmd  = [ConsoleColor]::Yellow
+  $bCmd  = [ConsoleColor]::DarkGray
 
   # --- HEADER ---
   Write-BoxTop -Title ('EXPLORER  ' + $script:Workspace) -Border $bHead
@@ -733,10 +760,10 @@ function Show-Listing {
   }
   Write-BoxBottom -Border $bList
 
-  # --- COMMAND (Yellow border + loud keys) ---
+  # --- COMMAND (DarkGray frame; Yellow chips = sole input signal) ---
   Write-BoxTop -Title '3 COMMAND  << type here' -Border $bCmd
   Write-BoxKeyParts -Border $bCmd -Parts @(
-    @{ T = ' >_ '; C = [ConsoleColor]::White },
+    @{ T = ' >_ '; C = [ConsoleColor]::Yellow },
     @{ T = 'waiting...  '; C = [ConsoleColor]::DarkGray },
     @{ T = '[ r ]'; C = [ConsoleColor]::Yellow },
     @{ T = ' refresh  '; C = [ConsoleColor]::White },
@@ -749,7 +776,7 @@ function Show-Listing {
     @{ T = '[ s ]'; C = [ConsoleColor]::Yellow },
     @{ T = ' DESK  '; C = [ConsoleColor]::Gray },
     @{ T = '[ gd ]'; C = [ConsoleColor]::Yellow },
-    @{ T = ' Grok  '; C = [ConsoleColor]::White },
+    @{ T = ' AI    '; C = [ConsoleColor]::White },
     @{ T = '[ ? ]'; C = [ConsoleColor]::Yellow },
     @{ T = ' help'; C = [ConsoleColor]::DarkGray }
   )
@@ -803,7 +830,7 @@ function Add-Favorite {
   }
   $existing = @(Get-Content -LiteralPath $fav -ErrorAction SilentlyContinue)
   if ($existing -contains $script:Cwd) {
-    Write-Host ("  already favorited: {0}" -f $script:Cwd) -ForegroundColor DarkYellow
+    Write-Host ("  already favorited: {0}" -f $script:Cwd) -ForegroundColor DarkCyan
   } else {
     Add-Content -LiteralPath $fav -Value $script:Cwd -Encoding UTF8
     Write-Host '  saved to favorites.txt' -ForegroundColor Magenta
@@ -820,25 +847,130 @@ function Get-EntryByIndex {
   return $null
 }
 
-function Start-GrokHere {
+function Get-AgentForWorkspace {
+  # D-004: optional 3rd TAB column (agent) in desk-roots.tsv; default grok
+  param([string]$Ws)
+  if (Test-Path -LiteralPath $script:RootsFile) {
+    foreach ($line in Get-Content -LiteralPath $script:RootsFile -ErrorAction SilentlyContinue) {
+      $t = $line.Trim()
+      if ($t -eq '' -or $t.StartsWith('#')) { continue }
+      $parts = $t -split "`t"
+      if ($parts.Count -lt 2) { $parts = $t -split '\s+', 2 }
+      if ($parts.Count -ge 3 -and $parts[0] -eq $Ws -and $parts[2].Trim()) {
+        $a = $parts[2].Trim().ToLowerInvariant()
+        if ($a -eq 'grok' -or $a -eq 'kimi' -or $a -eq 'codex') { return $a }
+      }
+    }
+  }
+  return 'grok'
+}
+
+function Find-AgentExe {
+  # D-004: grok / kimi / codex -> exe path or $null (PATH first, then known install dirs)
+  param([string]$Id)
+  $cmd = Get-Command $Id -ErrorAction SilentlyContinue
+  if ($cmd -and $cmd.Source -and (Test-Path -LiteralPath $cmd.Source)) { return [string]$cmd.Source }
+  $candidates = @()
+  if ($Id -eq 'grok') { $candidates += (Join-Path $env:USERPROFILE '.grok\bin\grok.exe') }
+  if ($Id -eq 'kimi') { $candidates += (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi.exe') }
+  foreach ($c in $candidates) {
+    if (Test-Path -LiteralPath $c) { return $c }
+  }
+  return $null
+}
+
+# R5 reserved binding names — keep in sync with desk.lua RESERVED_NAMES (L-2)
+$script:ReservedNames = @(
+  'home', 'desktop', 'documents', 'downloads', 'my documents', 'administrator',
+  'users', 'temp', 'tmp', 'appdata', 'windows', 'system32', 'config',
+  '.config', 'wezterm', '.grok', '.kimi', '.kimi-code', '.codex'
+)
+
+function Test-ReservedName {
+  # R5 gate: reserved names are never project bindings (desk.lua parity)
+  param([string]$Name)
+  if ([string]::IsNullOrWhiteSpace($Name)) { return $true }
+  return ($script:ReservedNames -contains $Name.Trim().ToLowerInvariant())
+}
+
+function Test-WeakPath {
+  # R2/R5 gate: weak/system paths never get an AI session identity or a
+  # desk-roots binding. Keep in sync with desk.lua M.is_weak_path (L-2).
+  param([string]$Cwd)
+  if ([string]::IsNullOrWhiteSpace($Cwd)) { return $true }
+  if ($Cwd -match '^\\+[a-zA-Z]:') { return $true }  # malformed \\C: leftovers
+  $c = Normalize-PathKey $Cwd
+  $homeKey = Normalize-PathKey $env:USERPROFILE
+  if ($c -eq $homeKey) { return $true }
+  $exact = @(
+    'Desktop', 'Documents', 'Downloads', 'Pictures', 'Music', 'Videos', 'OneDrive',
+    '.config', '.config\wezterm',
+    '.grok', '.grok\bin', '.grok\sessions',
+    '.kimi', '.kimi\bin', '.kimi\sessions',
+    '.kimi-code', '.kimi-code\bin', '.kimi-code\sessions',
+    '.codex', '.codex\bin', '.codex\sessions'
+  ) | ForEach-Object { Normalize-PathKey (Join-Path $env:USERPROFILE $_) }
+  if ($exact -contains $c) { return $true }
+  # whole AppData tree (incl. AppData itself — desk.lua prefix parity)
+  if ($c.StartsWith($homeKey + '\appdata')) { return $true }
+  if ($c -match '\\windows\\(system32|syswow64)') { return $true }
+  if ($c -match '\\appdata\\local\\temp' -or $c -match '\\windows\\temp') { return $true }
+  if ($c -match '^[a-z]:$') { return $true }
+  return $false
+}
+
+function Start-AgentHere {
+  # D-004: route by desk-roots agent binding (default grok); if that exe is missing,
+  # fall back to the first available agent in order grok > kimi > codex.
   param([string]$WorkDir, [string]$Label)
-  $grok = Join-Path $env:USERPROFILE '.grok\bin\grok.exe'
-  if (-not (Test-Path -LiteralPath $grok)) {
-    Write-Host '  grok.exe not found' -ForegroundColor Red
+  # R1: refuse weak/system paths as AI session identity
+  if (Test-WeakPath -Cwd $WorkDir) {
+    Write-Host ("  拒绝在弱路径开 AI: {0}" -f $WorkDir) -ForegroundColor Red
+    Write-Host '  home/Desktop 等弱路径不作任务身份；先用 b 绑定到具体项目目录 (weak path)' -ForegroundColor DarkCyan
+    Start-Sleep -Seconds 1.5
+    return
+  }
+  $agent = Get-AgentForWorkspace -Ws $script:Workspace
+  $exe = Find-AgentExe -Id $agent
+  if (-not $exe) {
+    foreach ($cand in @('grok', 'kimi', 'codex')) {
+      $exe = Find-AgentExe -Id $cand
+      if ($exe) { $agent = $cand; break }
+    }
+  }
+  if (-not $exe) {
+    Write-Host '  no agent CLI found (grok/kimi/codex)' -ForegroundColor Red
     Start-Sleep -Seconds 1
     return
   }
-  # Always pass --cwd so TUI top bar == DESK/VIEW (F-005)
-  $ok = Invoke-WezSpawn -WorkDir $WorkDir -ProgArgs @($grok, '--cwd', $WorkDir)
+  $agentTitle = switch ($agent) { 'grok' { 'Grok' } 'kimi' { 'Kimi' } 'codex' { 'Codex' } default { $agent } }
+  # grok = --cwd flag; kimi = process cwd IS identity (no --cwd);
+  # codex = WinGet .cmd shim -> launch via PowerShell host (direct spawn freezes)
+  if ($agent -eq 'codex') {
+    $cwdEsc = $WorkDir.Replace("'", "''")
+    $psCmd = @"
+Set-Location -LiteralPath '$cwdEsc'
+try { & codex -C '$cwdEsc' } catch { Write-Host `$_.Exception.Message -ForegroundColor Red }
+"@
+    $progArgs = @('powershell.exe', '-NoLogo', '-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', $psCmd)
+  } elseif ($agent -eq 'grok') {
+    # Always pass --cwd so TUI top bar == DESK/VIEW (F-005)
+    $progArgs = @($exe, '--cwd', $WorkDir)
+  } else {
+    $progArgs = @($exe)
+  }
+  $ok = Invoke-WezSpawn -WorkDir $WorkDir -ProgArgs $progArgs
   if ($ok) {
-    Write-Host ("  OK: Grok @ {0}" -f $Label) -ForegroundColor Green
-    Write-Host ("  --cwd {0}" -f $WorkDir) -ForegroundColor DarkGray
+    Write-Host ("  OK: {0} @ {1}" -f $agentTitle, $Label) -ForegroundColor Green
+    Write-Host ("  cwd {0}" -f $WorkDir) -ForegroundColor DarkGray
     Write-Host '  (对话顶栏应与本侧栏 DESK/VIEW 一致；再 F7 会跟对话同根)' -ForegroundColor DarkCyan
     # Keep desk-roots aligned for this task name
     Write-DeskRootToFile -Ws $script:Workspace -PathValue $script:Desk
   } else {
     Set-Location -LiteralPath $WorkDir
-    & $grok --cwd $WorkDir
+    if ($agent -eq 'grok') { & $exe --cwd $WorkDir }
+    elseif ($agent -eq 'codex') { & codex -C $WorkDir }
+    else { & $exe }
   }
   Start-Sleep -Seconds 1.0
 }
@@ -928,7 +1060,7 @@ while ($running) {
 
   if ($low -eq 'q' -or $low -eq 'quit' -or $low -eq 'exit') {
     Stop-FsWatch
-    Write-Host '  Quit. Close pane: F4  (or Alt+z then x)' -ForegroundColor DarkGray
+    Write-Host '  Quit. Close pane: F4' -ForegroundColor DarkGray
     $running = $false
     break
   }
@@ -950,12 +1082,27 @@ while ($running) {
 
   # Bind current VIEW as new DESK for this workspace
   if ($low -eq 'b' -or $low -eq 'bind') {
+    # H-2 / R5: same gates as desk.lua set_root — no weak path, no reserved name
+    if (Test-ReservedName -Name $script:Workspace) {
+      Write-Host ("  拒绝绑定: 工作区名 '{0}' 是保留名（R5）" -f $script:Workspace) -ForegroundColor Red
+      Start-Sleep -Seconds 1.5
+      continue
+    }
+    if (Test-WeakPath -Cwd $script:Cwd) {
+      Write-Host ("  拒绝绑定弱路径: {0}" -f $script:Cwd) -ForegroundColor Red
+      Write-Host '  home/Desktop/AppData/agent 目录等不作任务根；先进入具体项目目录再 b' -ForegroundColor DarkCyan
+      Start-Sleep -Seconds 1.5
+      continue
+    }
     $script:Desk = $script:Cwd
-    Write-DeskRootToFile -Ws $script:Workspace -PathValue $script:Desk
-    Write-Host '  已绑定任务根 DESK = 当前 VIEW' -ForegroundColor Magenta
-    Write-Host ("  WS:{0}" -f $script:Workspace) -ForegroundColor Cyan
-    Write-Host ("  DESK:{0}" -f $script:Desk) -ForegroundColor White
-    Write-Host '  状态栏下次刷新会显示新 DESK；F6/Grok 将默认用此根' -ForegroundColor DarkGray
+    if (Write-DeskRootToFile -Ws $script:Workspace -PathValue $script:Desk) {
+      Write-Host '  已绑定任务根 DESK = 当前 VIEW' -ForegroundColor Magenta
+      Write-Host ("  WS:{0}" -f $script:Workspace) -ForegroundColor Cyan
+      Write-Host ("  DESK:{0}" -f $script:Desk) -ForegroundColor White
+      Write-Host '  状态栏下次刷新会显示新 DESK；F6/AI 将默认用此根' -ForegroundColor DarkGray
+    } else {
+      Write-Host '  绑定未写入（被门禁拒绝）' -ForegroundColor Red
+    }
     Start-Sleep -Seconds 1.2
     continue
   }
@@ -1004,21 +1151,21 @@ while ($running) {
       Write-Host '  OK: new shell tab @ VIEW' -ForegroundColor Green
     } else {
       Set-Location -LiteralPath $script:Cwd
-      Write-Host '  cd in this pane only' -ForegroundColor Yellow
+      Write-Host '  cd in this pane only' -ForegroundColor White
     }
     Start-Sleep -Seconds 0.8
     continue
   }
 
-  # Grok at desk root (preferred for "this task's AI chat")
+  # AI agent at desk root (preferred for "this task's AI chat"; routed by desk-roots agent)
   if ($low -eq 'gd' -or $low -eq 'gg') {
-    Start-GrokHere -WorkDir $script:Desk -Label 'DESK (任务根)'
+    Start-AgentHere -WorkDir $script:Desk -Label 'DESK (任务根)'
     continue
   }
 
-  # Grok at current browse path
+  # AI agent at current browse path
   if ($low -eq 'g') {
-    Start-GrokHere -WorkDir $script:Cwd -Label 'VIEW (浏览位置)'
+    Start-AgentHere -WorkDir $script:Cwd -Label 'VIEW (浏览位置)'
     continue
   }
 
@@ -1054,7 +1201,7 @@ while ($running) {
       Write-Host ("  VS Code: {0}" -f $ent.Name) -ForegroundColor Green
     } else {
       [void](Open-DefaultApp -PathValue $ent.Path -Kind $ent.Kind)
-      Write-Host '  code not found; used default app' -ForegroundColor Yellow
+      Write-Host '  code not found; used default app' -ForegroundColor Cyan
     }
     Start-Sleep -Seconds 0.7
     continue

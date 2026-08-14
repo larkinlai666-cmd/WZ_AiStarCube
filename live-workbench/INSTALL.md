@@ -11,7 +11,7 @@ powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1
 
 Only if you cannot run `Install-WZ.ps1`:
 
-1. Install [WezTerm](https://wezfurlong.org/wezterm/) and Grok Build CLI.
+1. Install [WezTerm](https://wezfurlong.org/wezterm/) and at least one agent CLI — Grok Build CLI, Kimi Code CLI, or OpenAI Codex CLI (any one is enough; grok is NOT required).
 2. Backup `%USERPROFILE%\.config\wezterm` if it exists.
 3. Copy:
 

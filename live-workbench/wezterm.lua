@@ -1,10 +1,10 @@
 -- =============================================================================
 --  AI STAR CUBE for WezTerm
---  Professional multi-pane desk for Grok / Codex and other CLI AI tools
+--  Professional multi-pane desk for CLI AI agents (grok / kimi / codex)
 --
 --  Chinese-IME friendly: no Shift/uppercase for core workbench keys
 --  Direct: F7 explorer · F9 projects · F4 close pane · F6 desk · F8 help
---  Leader: Alt+z then lowercase (Alt+; flaky on CN IME; NOT Ctrl+; — Grok)
+--  Leader: Alt+z then lowercase (Alt+; flaky on CN IME; NOT Ctrl+; — 留给 AI agent)
 --  Reload: Ctrl+Shift+R  (does not need Leader)
 --  Scope: window-local only (WezTerm focused); never system-global
 --
@@ -105,4 +105,4 @@ end
 
 return config
 
--- reload-bump: 2026-08-10T01:00:00-tab-role-not-literal-Tab
+-- reload-bump: 2026-08-09T15:50:00-agent-parity

@@ -68,22 +68,94 @@ Source of runtime behavior: `%USERPROFILE%\.config\wezterm\`（**不在本 git �
 1. 核心快捷键 **不要求大写 / Shift**（中文输入常态小写）。
 2. 避免把 `Ctrl+Shift+字母`、滥用 `Ctrl+Alt+*` 当地板油。
 3. 直达操作用 **F 键**，并避开 `F1 / F2 / F5 / F10 / F12`。
+   - 有意识的例外（F-013）：`F1` = 速查面板（可能被 Windows 帮助吞，面板内 `q` 兜底）；`F5` = 重载（`Ctrl+Shift+R` 冗余应急）。
 4. 能鼠标完成的不绑键（例如切窗格）。
-5. **不与 Grok 抢** `F2`、`Ctrl+;`。
+5. **不与 Grok 抢** `F2`、`Ctrl+;`（kimi/codex 等同理——字母键整体留给 agent）。
 6. 绑定仅在 **WezTerm 窗口聚焦** 时生效（非系统全局热键）。
+7. **无 Leader 前缀层（D-007）**；非全局动作一律进 Init 面板本地键。
 
-### Task model (F-004 + D-003)
+### Task model (F-013 + D-003)
 
 | Concept | Where | Meaning |
 |---|---|---|
-| **项目名** | `desk-roots` 左列 / `.wz-project` `name=` | 绑定名（列表/F9/页签显示）；**不是** Grok 会话标题 |
-| **项目路径** | `desk-roots` 右列 / `.wz-project` `path=` | 写死的绝对路径；Grok 必须以 `--cwd` 启动于此 |
-| **会话 cwd** | Grok 顶栏 | 进程启动 cwd；会话内 `cd` 不改身份 |
+| **项目名** | `desk-roots` 左列 / `.wz-project` `name=` | 绑定名（Init 列表/页签显示）；**不是** agent 会话标题 |
+| **项目路径** | `desk-roots` 右列 / `.wz-project` `path=` | 写死的绝对路径；agent 必须以它为启动 cwd（grok `--cwd` / codex `-C` / kimi 进程 cwd） |
+| **会话 cwd** | agent 顶栏 | 进程启动 cwd；会话内 `cd` 不改身份 |
 | **路径槽** | Wez 左状态栏 | 当前页签 DESK（强路径） |
 
 Binding table on machine: `workbench\desk-roots.tsv`. Marker: `<project>\.wz-project`.
 
 **Gates (F-007):** home / Desktop / Documents 根 / Downloads / AppData / Temp 永不当正式项目；启动菜单不再提供 “Grok @ home”；Init 对 SYS 行拒绝 Enter 开聊。
+
+### Multi-model handover（D-004）
+
+背景（F-010）：既有设计以「Grok 单模型会话」为默认假设，未预留多个模型（Grok / Kimi / Codex / …）接手同一任务的机制。设计原则：**任务身份与模型解耦；同模型接手续会话，跨模型接手走文件态，绝不依赖会话历史**。
+
+#### 1 · 任务 ≠ 会话
+
+任务 = desk-roots 绑定（名 + 冻结路径），不属于任何模型/CLI。某模型的会话只是任务的一次运行时实例。任何 agent CLI 在冻结路径上启动即视为在该任务上工作。门禁 R1–R6 与模型无关，逐字保留。
+
+#### 2 · Agent 注册表（可扩展）
+
+| Agent | 启动方式 | 同模型续接手 | 备注 |
+|---|---|---|---|
+| `grok` | `grok --cwd <path>`（F-005） | Grok 自有 resume | 现有一等行为，不动 |
+| `kimi` | **无 `--cwd`**；由 `wezterm cli spawn --cwd <path> -- kimi` 设定进程 cwd 后启动（F-011） | `kimi --continue`（续当前目录最近会话；会话按工作目录分组存于 `~/.kimi-code/sessions/`） | 本设计的一等公民 |
+| `codex` | `codex -C/--cd <path>`，或 spawn 设定进程 cwd（F-012） | `codex resume --last`（续最近）/ `codex resume <id>`（picker 按 cwd 过滤）；会话存 `~/.codex/sessions/` | WinGet `.cmd` 垫片须经 PowerShell host 或解析真实 exe（F-012） |
+| `deepseek` | **无 `--cwd`**；spawn 进程 cwd = 项目身份（kimi 同款，F-014） | `deepseek --continue`/`--resume`（续当前目录已存会话；存于 `~/.deepseek-cli/sessions/<sha256(cwd)[0:16]>.json`，REPL 进入时亦自动恢复） | 社区版 `@kavienw/deepseek-cli`（npm 全局，`.cmd` 垫片经 PowerShell host）；需 DeepSeek API Key，首启在页签内交互录入并自动保存 |
+
+HUD/接管检测：按窗格前台进程名识别 agent（grok / kimi / codex / deepseek），识别不出视为普通 shell。
+
+#### 3 · 交接契约（跨模型）
+
+- **PPS 项目**：交接物 = 恢复包（`scripts/resume_packet.*` + `PROJECT_STATE.md` + `CONTEXT.md`）。本会话 Grok→Kimi 已实证此路径可用，不另造机制。
+- **一般项目**：交接物 = `<项目根>\.wz-handoff.md`（workbench 所有，命名对齐 `.wz-project`）。模板：
+
+```
+# Handoff — <项目名>
+- Updated: <ISO 时间>
+- Last agent: <cli 名 + 模型>
+- Goal: <当前目标一句话>
+- Done: <已完成要点>
+- Pending: <下一步，含入口文件/命令>
+- Files: <本阶段实际改动的关键路径>
+- Verify: <验证命令>
+- Notes: <坑、约定、不要动的地方>
+```
+
+- 会话 transcript **显式排除**在交接物之外；同模型同机优先用各自 resume（如 `kimi --continue`），跨模型必须走上述文件。
+- 写纪律：agent 在任务收口/中断前更新 `.wz-handoff.md`（或 PPS 项目走既有收口写集）。
+
+#### 4 · 接手协议（incoming agent 固定动作）
+
+1. 由 desk-roots / `.wz-project` 解析任务根（弱路径拒绝不变）；
+2. 有恢复包走 L0；否则读 `.wz-handoff.md`（缺文件则按新任务处理）；
+3. 只读交接物列出的文件/符号，再动手；
+4. 先跑 `Verify` 确认基线，再改；
+5. 不得假设能看到上一模型的对话内容。
+
+#### 5 · 启动槽位泛化
+
+- `open-project.ps1 -Agent <grok|kimi|codex|deepseek>`：grok 用 `--cwd`，codex 用 `-C`，kimi/deepseek 用 spawn 进程 cwd。
+- `desk-roots.tsv` 可选第三列 `agent`；写出方一律显式写第三列（含 grok），读取方容忍两列旧行（D-005）。
+- **缺省解析（D-005）**：显式指定（第三列 / `-Agent` / 向导选择）> 本机已安装 agent 按 grok→kimi→codex→deepseek 取第一个；任何单一 agent 缺失不阻断其它 agent 的完整使用。
+- Init 新建向导 `c` 冻结 name+path 不变，追加一步选默认 agent（可回车取默认，默认跟随所选 CLI）。
+- **启动与 agent 解耦（核心理念，2026-08-13 定稿；D-009 行输入 + D-010 组合加速）**：同屏两区两步——Init 常驻「2 AGENT」区列出本机已装 agent；第 1 步 `wz>` 输任务号（`n<num>`=强制新会话），第 2 步 `agent>` 输模型号后启动；无第二屏、无行展开，选择动作本身不跳过。**两步文法同构**：数字+Enter = 选 / Enter 空 = 默认（D-005 解析）/ q = 返回（第 2 步取消零 spawn）。**屏幕静态**——只在状态转换时重绘一次，键入过程零重绘；序号两区同款 `[ n]` 芯片同缩进；亮黄=当前激活步骤的可输入索引（D-013 预留色，阶段高亮保留），非激活步骤暗灰，另由 `<< step N` 标记指示。**组合加速道（D-010）**：默认视图封顶 9 行，两位数 `<任务><agent>` 一次直启（`n<组合>` 强制新会话），门禁照常；`a` 全量视图组合失效、数字回退行号。
+- 顶栏/HUD 在项目名旁显示当前页签 agent。
+
+#### 6 · 并发纪律
+
+同一任务默认串行；`.wz-handoff.md` 的 Last agent + 时间戳仅作提示，不引入锁或常驻协调（KISS）。同任务开多个不同模型窗格属于用户自裁量，工作台不阻止。
+
+#### 7 · 实施切片（状态）
+
+1. ✅ live：`open-project.ps1 -Agent` + `desk.lua`/`projects.lua`/`sidebar.ps1` 读可选第三列 `agent`（缺省 grok，写出方全部保留该列）+ `status.lua` HUD agent 槽（进程名识别，kimi/codex 回退第三列）；
+2. ✅ live：Init 向导 `c` 现为 5 步（名 → 位置 → CLI → **默认 agent** → 确认），`bootstrap.ps1` CLI 注册表加入 kimi；
+3. ✅ 本仓：`live-workbench/` 快照逐文件 diff 同步、`desk-roots.example.tsv` 三列表头、README/cheatsheet 回写；
+4. ⚠️ 部分：脚本化交接演练已过（`prototypes/handoff-smoke/`：交接文件 → 基线 Verify FAIL → 接手完成 → Verify PASS → 回写 handoff）；**交互部分待用户 live 冒烟**：Ctrl+F5 后 F6 在 kimi 任务上开 kimi 页签、向导选 agent、open-project `-Agent kimi`。
+5. ✅ 平权去 grok 耦合（2026-08-10，D-005）：F6/续聊/布局族按 agent 路由（修掉 F6 写死 grok、resume 只支持 grok 两个核心断点）；Init 面板 codex 会话枚举 + 三路路由 + `Start-CodexTab`（`Read-CodexSessionSummaries`，冒烟 `smoke-codex-sessions.ps1` ALL PASS）；sidebar `Start-AgentHere` 三路 + R1 门禁；profile/cheatsheet/README/INSTALL 平权措辞；`Install-WZ` Doctor 改为 ≥1 已装 agent 即通过；`open-project` 缺省解析按 D-005、`-Continue`/`-Prompt` 三路映射；load guard 正则泛化防 false pass。交互冒烟待用户。
+
+D-004 已定案；切片落地期间 Grok 默认行为不变（agent 列缺省 = grok）。
 
 ### Terminal UI iron rules (wizard / choosers)
 
@@ -97,20 +169,19 @@ Binding table on machine: `workbench\desk-roots.tsv`. Marker: `<project>\.wz-pro
 
 实现：`bootstrap.ps1`（`Stop-Wizard` / `Format-CliLeaf`）、`options.lua` 鼠标、`hyperlinks.lua`；违规视为缺陷。
 
-### Core key map (current local truth · F-004)
+### Core key map (current local truth · F-013 / D-007)
 
 | Key | Action |
 |---|---|
-| F7 | Left Explorer (bound to DESK) |
-| F9 | Project / task picker（当前窗 **新页签**，不藏旧页签） |
-| F6 | Standard 3-pane AI desk |
-| F8 | Cheatsheet panel toggle |
+| 新页签 / ＋ / 冷启动 | **Init 面板**（静态屏 + 行输入，D-009/D-010）：`wz>` 输任务号（`n<号>`=新会话；`<任务><agent>` 两位数=一次直启，默认视图 ≤9 行）→ `agent>` 输模型号 / Enter=默认 / q 取消零 spawn；序号 `[ n]` 芯片两区同制式，亮黄=可输入索引（D-013 预留色） |
+| F1 | Cheatsheet 面板开关（可能被 Windows 帮助吞；面板内 q 兜底） |
+| F3 | 新建项目向导（`-WizardOnly`） |
 | F4 | Close pane |
-| F11 | Fullscreen |
-| Leader **`Alt+z`** then lowercase | `h` help · `e` explorer · `.` pick project · `j` jump open tasks · `a`/`b` 3-pane · … |
-| Reload (no Leader) | **`Ctrl+F5`** / `Ctrl+Shift+R`（推荐；不依赖 Leader） |
+| F5 | Reload 配置（`Ctrl+Shift+R` 为应急冗余） |
+| F6 | 三栏 AI 桌：先弹**全量已装 agent 平权选择器**（默认 = desk-roots 第三列路由排第一，↑↓+Enter 确认，Esc 取消零 spawn；单一已装 agent 自动跳过；未绑定页签只弹 toast） |
+| F7 | Left Explorer（绑当前页签 DESK） |
 
-Deliberately unbound: F1, F2, F5, F10, F12; `Ctrl+;` reserved for Grok prompt queue. **Do not teach `Alt+;` as Leader** (legacy partial chords only; CN IME often dead).
+**无 Leader 层（D-007，2026-08-13 用户决定退役）**；F8–F12 刻意不绑；F2、`Ctrl+;` 归 agent CLI；键仅 WezTerm 聚焦生效。面板本地键（c/n/s/d/r/a/q/数字）承担一切非全局动作。
 
 ### Session cwd (F-005) + create freeze (F-008)
 
@@ -124,15 +195,20 @@ Grok 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。应用 `--cwd
 |---|---|---|
 | F-006 侧栏与对话同根 | **已改 live config** | 焦点在 Grok 时 F7 以 `--cwd` 为 DESK；页签级 desk；`open-project.ps1` 写 desk-roots |
 | F-006 侧栏可点击打开 | **已改** | 文件 OSC-8；文件夹数字进入；0 上级 |
-| 顶栏本页签动态任务 | **已改** | 状态跟 **当前标签** 窗格 cwd；关 HUD：`Alt+z` 再 `Shift+H` |
-| 任务初始化面板 | **冷启动+新标签统一** | `default_prog`/Ctrl+Shift+T/Leader-t → `bootstrap.ps1` 表格；纯 Shell=Ctrl+Alt+T；分屏仍 PS；`no-bootstrap` 可关 |
+| 顶栏本页签动态任务 | **已改** | 状态跟 **当前标签** 窗格 cwd；HUD 随页签切换自动刷新 |
+| 任务初始化面板 | **冷启动+新标签统一** | `default_prog`/Ctrl+Shift+T → `bootstrap.ps1` 表格；纯 Shell=Init 面板按 `s`（或 launch menu 的 PowerShell 项）；分屏仍 PS；`no-bootstrap` 可关 |
+| Init 面板卡顿 | **已改 live** | 原为每次按键全量重扫 grok/kimi/codex 会话目录；现行缓存 + 脏标记（`$script:RowsDirty`），仅 `r`/ `a`/ 动作后重建，j/k/数字/Enter 纯渲染缓存行 |
+| Init 列表 Act\*/排序 | **已下线/已改** | Act\* 列与整条 marks 管线（缓存+后台刷新器+空闲轮询）已**整体拆除**（用户 2026-08-13：优化不出效果，干掉）；列表改为 `# DateTime Tag Project Path Model Title`，Path 列头部保留、超长尾端 `~` 截断；bound 层按最近活跃倒序 |
+| Init 启动与 agent 解耦 | **已改 live（同屏两区两步 + D-009 静态屏行输入）** | **核心理念**：两步选择确认但不换屏——本机已装 agent 常驻「2 AGENT」区（grok/kimi/codex/deepseek 按安装出现）；`wz>` 输任务号（或 `n<号>` 强制新会话）待命 AGENT 区，`agent>` 输模型号 / Enter=默认（D-005 解析）/ q 取消零 spawn，随后启动（resume/new 逐 agent 标注）；R1–R6 门禁不变。**屏幕静态**：只在状态转换时重绘一次（逐键重绘两案在 ConPTY 下均实测闪烁，已否决，D-009）。DETAIL 区块/`i` 键、独立 LAUNCH 选择屏（`Read-AgentChoice`）、面板内光标与逐键循环均已删除；grok `agent_name`（如 `grok-build-plan`）读取时归一化为 `grok`，否则续聊匹配永远落空。2026-08-14：启动屏升级——所有 agent 页签统一先播走路猫猫读条动画（约 300ms 固定窗，`Get-AgentSplashScript`，向导 `c` 链路同享），agent 首帧自行覆盖；动画播完统一清屏（deepseek 是行式 REPL 无全屏 TUI，防猫条残留）。配色标准 D-013：亮黄=唯一可输入色（选项索引芯片 + 行输入提示符前缀 `wz>`/`agent …`/`explorer>`，全局通用设计）并全局预留——框框/表头/状态行/装饰一律禁黄；信息=Cyan/White/Gray、错误=Red、成功=Green、装饰=Magenta |
 
 ### Known residual pain (workbench backlog seeds)
 
-- 已打开的旧 Explorer 窗格不会自动跟新对话；需 F4 关掉后 **先点 Grok 再 F7**。
-- F9 / Leader 依赖 WezTerm **窗口聚焦**、笔记本 `Fn`；Leader 用 **Alt+z**（勿再用 Alt+;）。
+- 已打开的旧 Explorer 窗格不会自动跟新对话；需 F4 关掉后 **先点 AI 窗格再 F7**。
+- 全局键依赖 WezTerm **窗口聚焦** 与笔记本 `Fn` 层（F 键）。
 - 个人「彻底想要的样子」其余缺口待继续收集。
+- 多模型接手同一任务 ~~无设计（F-010）~~ → 已有设计（D-004）并完成平权落地（D-005，2026-08-10）；残留：codex 无标题会话默认被 Layer C 过滤（`-All` 可见）、kimi `-p` 为一次性非交互。
 - 配置在 home 树；第三方用 `Install-WZ.ps1`，作者本机仍以 live 为准。
+- **`bootstrap.ps1` 依赖 UTF-8 BOM**：PS 5.1 对无 BOM 文件按 GBK 误读，中文/颜文字会炸解析；编辑工具写回会剥 BOM —— 改后必须补回 BOM 再跑 ParseFile 校验。
 
 ## Current package target (workbench-first)
 
@@ -153,7 +229,7 @@ Grok 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。应用 `--cwd
 1. 以 **WZ-AiWorkBench** 为族名的 skill（可能多个）
 2. Agent 对 WS/DESK、键位作用域、Grok 共存、cwd 纪律的可执行协议
 3. 可选：portable assets / 安装与同步逻辑
-4. 验收：在真实 WezTerm 流上对照 F6–F9 / Leader / 启动脚本
+4. 验收：在真实 WezTerm 流上对照 F1/F3–F7 键位、Init 两步流与启动脚本
 
 ## Acceptance (phase-split)
 
@@ -176,37 +252,37 @@ Grok 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。应用 `--cwd
 | # | 项 | 通过标准 |
 |---|---|---|
 | A1 | Init 任务表 | 冷启动 / 新标签出现 Init 表；TASK 来自 desk-roots，home 不在正式 TASK |
-| A2 | SYS 拒开聊 | 对 home/Desktop 等 SYS 行 Enter **不能** 以正式项目开 Grok |
-| A3 | 新建冻结 | Init `c`：一次写目录 + desk-roots + `.wz-project`，Grok 仅 `--cwd` 该路径 |
-| A4 | 路径槽 | 左状态栏路径槽 = 当前页签 DESK（强路径），与 Grok 顶栏 cwd 一致 |
+| A2 | SYS 拒开聊 | 弱路径不得以正式项目身份开任何 agent：Init SYS 行拒 Enter；未绑定页签 F6 只弹 toast 不开页签；sidebar 在 home 按 `b`/`g` 被拒 |
+| A3 | 新建冻结 | Init `c` 五步（名→位置→CLI→默认 agent→确认）：一次写目录 + desk-roots（显式三列）+ `.wz-project`；agent 仅以该路径为启动 cwd |
+| A4 | 路径槽 | 左状态栏路径槽 = 当前页签 DESK（强路径），与 agent 顶栏 cwd 一致 |
 | A5 | 项目名 | 页签/列表「项目名」= desk-roots 绑定名，**不是**会话标题 / cwd leaf |
 
 #### B · 键位与布局
 
 | # | 项 | 通过标准 |
 |---|---|---|
-| B1 | F9 tabs-first | 选项目后**当前窗新页签**；旧页签仍在 |
-| B2 | F6 三栏 | 在 DESK 上开 Grok + Shell + 监视三栏 |
-| B3 | F7 同根 | 先点 Grok 再 F7 → Explorer 根 = Grok `--cwd` / 页签 DESK |
-| B4 | F8 速查 | 开/关 cheatsheet；文案 Leader 为 **Alt+z** |
-| B5 | Leader | `Alt+z` 后状态栏 LEADER 闪现；`. e h j` 可用 |
-| B6 | 重载 | `Ctrl+F5` toast「配置已重载」（不依赖 Leader） |
-| B7 | 不抢 Grok | F2、`Ctrl+;` 仍归 Grok；键仅 WezTerm 聚焦生效 |
+| B1 | F6 三栏 | 在绑定的强路径任务上 F6 → 先出**全量已装 agent 平权选择器**（默认 = 第三列路由排第一，↑↓+Enter），确认后开「agent + Shell + 监视」三栏；Esc 取消零 spawn；未绑定页签只弹 toast |
+| B2 | F7 同根 | 先点 AI 窗格再 F7 → Explorer 根 = 页签 DESK / agent 启动 cwd |
+| B3 | F1 速查 | cheatsheet 面板开/关（F1 被 Windows 吞时面板内 q 可关） |
+| B4 | Init 两步流（静态屏 + 组合加速） | `wz>` 输任务号（或 `n<号>` 新会话；两位数 `<任务><agent>` 一次直启，默认视图 ≤9 行）→ 2 AGENT 区待命 → `agent>` 输模型号 / Enter=默认 / q 取消零 spawn；序号 `[ n]` 芯片两区同制式同色系（亮黄=可输入索引（D-013 预留色））；屏幕只在状态转换时重绘一次，键入零重绘、无闪烁 |
+| B5 | 重载 | F5（或 Ctrl+Shift+R）toast「配置已重载」 |
+| B6 | 不抢 agent | F2、`Ctrl+;` 仍归 agent CLI；工作台键仅 WezTerm 聚焦生效；**无 Leader 层** |
 
 #### C · 启动与可移植
 
 | # | 项 | 通过标准 |
 |---|---|---|
 | C1 | open-project | `open-project.ps1` 用 wezterm spawn 页签，不叠独立 OS 窗 |
-| C2 | Doctor | `Install-WZ.ps1 -DoctorOnly` 全绿（本机前置满足时） |
-| C3 | 纯 Shell 逃生 | `Ctrl+Alt+T` 可得无 Init 的 PowerShell |
-| C4 | 快照同步 | 改门禁/键位后 `live-workbench/` 与 `~\.config\wezterm` 无关键契约漂移 |
+| C2 | Doctor | `Install-WZ.ps1 -DoctorOnly` 全绿（≥1 个已装 agent 即通过） |
+| C3 | 纯 Shell 逃生 | Init 面板按 `s` 可得不走任务流的纯 PowerShell 页签 |
+| C4 | 快照同步 | 改门禁/键位后 `live-workbench/` 与 `~\.config\wezterm` 无关键契约漂移（md5 一致 + BOM 断言过验证器） |
 
 #### D · 已知可接受残留（不阻塞达标）
 
 - 旧 Explorer 窗格不自动跟新对话（F4 后重开）
 - 笔记本 Fn 层、IME 抢键需用户环境自理
-- Codex 路径未做与 Grok 同级硬化
+- codex 本机未安装，其路径仅经静态/脚本化验证（D-006 已拉平门禁级硬化）
+- M-3：open-project.ps1 可移植性残留（硬编码安装目录 + cli 文本解析），留后续包
 - macOS/Linux 非一等支持
 
 ### Packaging phase (later)

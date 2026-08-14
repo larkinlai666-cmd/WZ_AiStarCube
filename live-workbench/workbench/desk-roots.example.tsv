@@ -1,5 +1,10 @@
-# AI STAR CUBE desk roots - project_name<TAB>absolute_path
+# AI STAR CUBE desk roots - project_name<TAB>absolute_path[<TAB>agent]
 # EXAMPLE FORMAT ONLY — do NOT copy this file as desk-roots.tsv with fake paths.
 # Install-WZ.ps1 creates an empty desk-roots.tsv and optionally binds your clone.
+# Optional 3rd column (D-004): agent = grok / kimi / codex — all peers, none privileged.
+# Missing 3rd column = resolve at launch: explicit choice > this column > first
+# installed of grok -> kimi -> codex (a missing grok is fine; kimi/codex-only works).
 #
 # name	C:\absolute\path\to\project
+# name	C:\absolute\path\to\project	kimi
+# name	C:\absolute\path\to\project	codex

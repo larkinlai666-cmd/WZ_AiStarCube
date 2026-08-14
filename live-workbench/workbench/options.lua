@@ -130,7 +130,7 @@ function M.apply(config)
   config.audible_bell = "Disabled"
 
   ------------------------------------------------------------------
-  -- Input / terminal capability (Grok TUI friendly)
+  -- Input / terminal capability (AI agent TUI friendly)
   ------------------------------------------------------------------
   config.term = "xterm-256color"
   config.enable_kitty_keyboard = true

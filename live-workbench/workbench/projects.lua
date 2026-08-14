@@ -1,8 +1,8 @@
 -- AI STAR CUBE · project picker + explorer + workspace switch
 --
--- F9 must feel instant: never block on scanning huge folders.
+-- The picker must feel instant: never block on scanning huge folders.
 -- Default list = desk-roots.tsv + favorites + fixed shortcuts.
--- Optional deep scan is a separate menu entry / Leader action.
+-- Optional deep scan is a separate menu entry.
 
 local wezterm = require("wezterm")
 local act = wezterm.action
@@ -19,8 +19,7 @@ local sidebar_ps1 = home .. "\\.config\\wezterm\\workbench\\sidebar.ps1"
 local SCAN_ROOTS = {
   home .. "\\Desktop",
   home .. "\\Documents",
-  home .. "\\.config",
-  home .. "\\.grok",
+  -- L-7: ~/.config removed — config/state dirs are not projects (R2 spirit)
 }
 
 local FIXED = {
@@ -28,7 +27,6 @@ local FIXED = {
   { label = "[固定] Desktop", id = home .. "\\Desktop" },
   { label = "[固定] Documents", id = home .. "\\Documents" },
   { label = "[固定] WezTerm config", id = home .. "\\.config\\wezterm" },
-  { label = "[固定] .grok", id = home .. "\\.grok" },
 }
 
 local function basename(path)
@@ -65,7 +63,8 @@ local function read_favorites()
 end
 
 local function read_desk_roots_list()
-  -- { { name = ws, path = path }, ... }
+  -- { { name = ws, path = path, agent = agent|nil }, ... }
+  -- D-004: optional 3rd TAB column; must not bleed into the path.
   local list = {}
   local f = io.open(roots_file, "r")
   if not f then
@@ -74,13 +73,22 @@ local function read_desk_roots_list()
   for line in f:lines() do
     line = line:match("^%s*(.-)%s*$") or ""
     if line ~= "" and not line:match("^#") then
-      local ws, path = line:match("^([^\t]+)\t+(.+)$")
+      local ws, path, agent = line:match("^([^\t]+)\t+([^\t]+)\t*(.-)$")
       if not ws then
         ws, path = line:match("^(%S+)%s+(.+)$")
+        agent = nil
       end
       path = normalize(path)
       if ws and path then
-        table.insert(list, { name = ws, path = path })
+        if agent then
+          agent = agent:match("^%s*(.-)%s*$") or ""
+          if agent == "" then
+            agent = nil
+          else
+            agent = agent:lower()
+          end
+        end
+        table.insert(list, { name = ws, path = path, agent = agent })
       end
     end
   end
@@ -263,15 +271,33 @@ function M.open_as_workbench(window, pane, path)
     return
   end
   if desk.is_weak_path(path) then
-    toast(window, "非项目路径", "不能在 home/Desktop 上开 AI 对话桌 — 先 F9 选真实项目", 5000)
+    toast(window, "非项目路径", "不能在 home/Desktop 上开 AI 对话桌 — 先在 Init 面板选真实项目", 5000)
     return
   end
   local name = desk.name_for_path(path) or basename(path)
   desk.set_root(name, path)
 
+  -- D-004: F6 launches the task's default agent (desk-roots 3rd column).
+  -- M-1: the resolved agent CLI must actually exist (no dead-tab spawn).
+  local agent = desk.agent_for_path(path) or "grok"
+  if not launch.has_agent(agent) then
+    toast(
+      window,
+      "AI 对话桌",
+      "未找到 " .. agent .. " CLI — 请在 desk-roots 第三列改绑已安装 agent（grok/kimi/codex/deepseek）",
+      5000
+    )
+    return
+  end
+  local ai_args = launch.agent_args(agent, path)
+  local title_suffix = ""
+  if agent ~= "grok" then
+    title_suffix = " | " .. launch.agent_label(agent)
+  end
+
   local mux_window = window:mux_window()
   local tab, main = mux_window:spawn_tab({
-    args = launch.grok_args(path),
+    args = ai_args,
     cwd = path,
   })
 
@@ -295,7 +321,7 @@ function M.open_as_workbench(window, pane, path)
           .. "; Write-Host '  根目录: "
           .. esc
           .. "' -ForegroundColor White"
-          .. "; Write-Host '  顶栏「本页签」随标签切换 · F7 侧栏 · F9 换项目' -ForegroundColor DarkGray"
+          .. "; Write-Host '  顶栏「本页签」随标签切换 · F7 侧栏' -ForegroundColor DarkGray"
           .. "; if (Get-Command git -ErrorAction SilentlyContinue) { git -C '"
           .. esc
           .. "' status -sb 2>$null }"
@@ -305,7 +331,7 @@ function M.open_as_workbench(window, pane, path)
   end
 
   if tab then
-    tab:set_title("✦ " .. name)
+    tab:set_title("✦ " .. name .. title_suffix)
   end
   if main then
     main:activate()
@@ -372,9 +398,10 @@ local function run_input_selector(window, pane, title, choices)
   end
 end
 
---- F9: fast project picker (bound tasks + favorites + fixed)
+--- Fast project picker (bound tasks + favorites + fixed).
+--- NOTE: currently unbound in keys.lua (Init 面板承担选项目)；保留供后续重绑。
 function M.show_picker(window, pane)
-  toast(window, "项目选择 F9", "↑↓ 选择  Enter 进入  Esc 取消  |  也可 Alt+z j 跳已开工作区", 4500)
+  toast(window, "项目选择", "↑↓ 选择  Enter 进入  Esc 取消", 4500)
 
   local ok, choices = pcall(M.collect_choices_fast)
   if not ok then
@@ -388,12 +415,12 @@ function M.show_picker(window, pane)
   run_input_selector(
     window,
     pane,
-    "F9 Project = bind WS+DESK  (Enter to switch)",
+    "Project = bind WS+DESK  (Enter to switch)",
     choices
   )
 end
 
---- Deep scan (slower): from menu row or Leader+.
+--- Deep scan (slower): from menu row.
 function M.show_picker_scan(window, pane)
   local ok, choices = pcall(M.collect_choices_scan)
   if not ok or not choices then
@@ -401,11 +428,11 @@ function M.show_picker_scan(window, pane)
     return
   end
   toast(window, "扫描完成", "共 " .. tostring(#choices) .. " 项", 2000)
-  run_input_selector(window, pane, "F9 scan · pick folder as project", choices)
+  run_input_selector(window, pane, "scan · pick folder as project", choices)
 end
 
 function M.show_workbench_picker(window, pane)
-  toast(window, "三栏 AI 桌", "选项目后直接开 Grok 三栏", 2500)
+  toast(window, "三栏 AI 桌", "选项目后直接开 AI 三栏桌", 2500)
   local ok, choices = pcall(M.collect_choices_fast)
   if not ok or not choices or #choices == 0 then
     choices = {}
@@ -566,7 +593,9 @@ function M.open_sidebar(window, pane)
   end
 
   if desk.is_weak_path(root) then
-    local fixed = desk.get_root("WZ_Skill") or desk.get_root(ws)
+    -- F-009: no hard-coded personal project fallback (was: WZ_Skill) —
+    -- repair only from THIS workspace's own binding, else stay unbound.
+    local fixed = desk.get_root(ws)
     if desk.is_strong_path(fixed) then
       root = fixed
       ws = desk.basename(fixed)
@@ -576,7 +605,7 @@ function M.open_sidebar(window, pane)
 
   ws = desk.basename(root)
   if desk.is_weak_path(root) then
-    toast(window, "Explorer", "无法解析项目根 — 请用 F9 选项目或 grok --cwd", 5000)
+    toast(window, "Explorer", "无法解析项目根 — 请先用 Init 面板选/建项目", 5000)
   end
 
   local start = root

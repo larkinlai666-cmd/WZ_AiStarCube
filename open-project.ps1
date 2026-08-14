@@ -1,20 +1,29 @@
-# Open WZ_Skill inside the EXISTING WezTerm window as a NEW TAB.
-# Never Start-Process grok.exe alone — that creates a separate OS window
+﻿# Open WZ_Skill inside the EXISTING WezTerm window as a NEW TAB.
+# Never Start-Process an agent CLI alone — that creates a separate OS window
 # that stacks on top of WezTerm (looks like "tabs never appear side by side").
 #
 # Usage (from any clone path):
 #   powershell -ExecutionPolicy Bypass -File .\open-project.ps1
 #   powershell -ExecutionPolicy Bypass -File .\open-project.ps1 -Prompt "continue WZ"
 #   powershell -ExecutionPolicy Bypass -File .\open-project.ps1 -Continue
+#   powershell -ExecutionPolicy Bypass -File .\open-project.ps1 -Agent kimi [-Continue]
 
 [CmdletBinding()]
 param(
     [string]$Prompt = "",
     [switch]$NewWindow,
-    # Resume most recent Grok session for this project (grok -c)
+    # Resume most recent session for this project
+    # (grok -c / kimi --continue / codex resume --last / deepseek --continue)
     [switch]$Continue,
-    # Open Grok Agent Dashboard instead of a chat
-    [switch]$Dashboard
+    # Open Grok Agent Dashboard instead of a chat (grok only)
+    [switch]$Dashboard,
+    # D-004: which agent CLI to launch. Empty (default) = desk-roots 3rd column
+    # for this project, else first installed of grok/kimi/codex/deepseek.
+    # grok = --cwd flag; kimi/codex/deepseek = process cwd via wezterm spawn
+    # (kimi/deepseek have no --cwd; codex has -C but the workbench uses process
+    # cwd uniformly).
+    [ValidateSet('', 'grok', 'kimi', 'codex', 'deepseek')]
+    [string]$Agent = ''
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,7 +38,9 @@ if ([string]::IsNullOrWhiteSpace($ProjectRoot) -or -not (Test-Path -LiteralPath 
 function Update-DeskRootBinding {
     param(
         [string]$RootPath,
-        [string]$ProjectName = ""
+        [string]$ProjectName = "",
+        # D-004 optional 3rd column; "" = leave this row as-is
+        [string]$Agent = ""
     )
     $rootsFile = Join-Path $env:USERPROFILE ".config\wezterm\workbench\desk-roots.tsv"
     if ([string]::IsNullOrWhiteSpace($ProjectName)) {
@@ -55,16 +66,21 @@ function Update-DeskRootBinding {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
     $map = [ordered]@{}
+    $agentMap = @{}
     if (Test-Path -LiteralPath $rootsFile) {
         foreach ($line in Get-Content -LiteralPath $rootsFile -ErrorAction SilentlyContinue) {
             $t = $line.Trim()
             if ($t -eq "" -or $t.StartsWith("#")) { continue }
-            $parts = $t -split "`t", 2
+            # D-004: tolerate 2 or 3 TAB columns (name, path, optional agent)
+            $parts = $t -split "`t"
             if ($parts.Count -lt 2) { $parts = $t -split "\s+", 2 }
             if ($parts.Count -ge 2) {
                 $k = $parts[0]; $p = $parts[1]
                 if ($reserved -contains $k.ToLowerInvariant()) { continue }
                 $map[$k] = $p
+                if ($parts.Count -ge 3 -and $parts[2].Trim()) {
+                    $agentMap[$k] = $parts[2].Trim().ToLowerInvariant()
+                }
             }
         }
     }
@@ -73,16 +89,27 @@ function Update-DeskRootBinding {
     foreach ($k in @($map.Keys)) {
         if ($map[$k].TrimEnd('\').ToLowerInvariant() -eq $pk -and $k -ne $ProjectName) {
             $map.Remove($k)
+            $agentMap.Remove($k)
         }
     }
     $map[$ProjectName] = $RootPath
+    $Agent = $Agent.Trim().ToLowerInvariant()
+    if ($Agent) { $agentMap[$ProjectName] = $Agent }
     $out = @(
-        "# AI STAR CUBE desk roots — project_name<TAB>absolute_path",
+        "# AI STAR CUBE desk roots — project_name<TAB>absolute_path[<TAB>agent]",
         "# 项目名(绑定名) 与 项目路径 写死绑定；Explorer / 状态栏 / F6 / Init 共用",
-        "# 弱路径(home/Desktop/…)与保留名不得写入"
+        "# 弱路径(home/Desktop/…)与保留名不得写入",
+        "# 可选第三列 agent: grok / kimi / codex / deepseek (D-004，四者平权；绑定时显式写入)"
     )
     foreach ($k in ($map.Keys | Sort-Object)) {
-        $out += ($k + "`t" + $map[$k])
+        # Unified semantics with Install-WZ.ps1: rows with a recorded agent get
+        # an EXPLICIT 3rd column (including grok); untouched legacy rows keep
+        # their original 2-column form.
+        if ($agentMap.Contains($k)) {
+            $out += ($k + "`t" + $map[$k] + "`t" + [string]$agentMap[$k])
+        } else {
+            $out += ($k + "`t" + $map[$k])
+        }
     }
     Set-Content -LiteralPath $rootsFile -Value $out -Encoding UTF8
     # freeze on disk
@@ -98,24 +125,73 @@ function Update-DeskRootBinding {
     Write-Host "PROJECT bind: $ProjectName -> $RootPath"
     Write-Host "marker: $marker"
 }
+# Resolve an agent CLI executable: PATH first, then well-known install dirs.
+# codex is usually a WinGet .cmd shim — spawning a shim as argv0 can freeze,
+# so the launcher below routes non-.exe shims through a PowerShell host.
+function Resolve-AgentExe([string]$Name) {
+    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source -and (Test-Path -LiteralPath $cmd.Source)) { return $cmd.Source }
+    $candidates = @()
+    switch ($Name) {
+        'grok' { $candidates = @(
+            (Join-Path $env:USERPROFILE ".grok\bin\grok.exe"),
+            (Join-Path $env:LOCALAPPDATA "Programs\grok\grok.exe")) }
+        'kimi' { $candidates = @(
+            (Join-Path $env:USERPROFILE ".kimi-code\bin\kimi.exe"),
+            (Join-Path $env:USERPROFILE ".kimi-code\bin\kimi.cmd")) }
+        'codex' { $candidates = @(
+            (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links\codex.exe"),
+            (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links\codex.cmd")) }
+        'deepseek' { $candidates = @(
+            (Join-Path $env:APPDATA "npm\deepseek.cmd"),
+            (Join-Path $env:APPDATA "npm\deepseek.exe")) }
+    }
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path -LiteralPath $c)) { return $c }
+    }
+    return $null
+}
+
 $bindName = Split-Path -Leaf $ProjectRoot
 if ([string]::IsNullOrWhiteSpace($bindName)) { $bindName = "WZ_AiStarCube" }
-Update-DeskRootBinding -RootPath $ProjectRoot -ProjectName $bindName
 
-$grok = $null
-$cmd = Get-Command grok -ErrorAction SilentlyContinue
-if ($cmd -and $cmd.Source) { $grok = $cmd.Source }
-if (-not $grok -or -not (Test-Path -LiteralPath $grok)) {
-    foreach ($c in @(
-        (Join-Path $env:USERPROFILE ".grok\bin\grok.exe"),
-        (Join-Path $env:LOCALAPPDATA "Programs\grok\grok.exe")
-    )) {
-        if ($c -and (Test-Path -LiteralPath $c)) { $grok = $c; break }
+# Resolve the effective agent (D-004 — grok/kimi/codex are peers):
+#   1. explicit -Agent
+#   2. desk-roots.tsv 3rd column for this project
+#   3. first installed of grok / kimi / codex (grok NOT required)
+$rootsFile = Join-Path $env:USERPROFILE ".config\wezterm\workbench\desk-roots.tsv"
+if (-not $Agent) {
+    if (Test-Path -LiteralPath $rootsFile) {
+        foreach ($line in Get-Content -LiteralPath $rootsFile -ErrorAction SilentlyContinue) {
+            $t = $line.Trim()
+            if ($t -eq "" -or $t.StartsWith("#")) { continue }
+            $parts = $t -split "`t"
+            if ($parts.Count -ge 3 -and $parts[0] -eq $bindName -and $parts[2].Trim()) {
+                $Agent = $parts[2].Trim().ToLowerInvariant()
+                break
+            }
+        }
     }
 }
-if (-not $grok -or -not (Test-Path -LiteralPath $grok)) {
-    throw "grok.exe not found. Install Grok Build CLI and ensure 'grok' is on PATH or ~/.grok/bin/grok.exe exists."
+if (-not $Agent) {
+    foreach ($a in @('grok', 'kimi', 'codex', 'deepseek')) {
+        if (Resolve-AgentExe $a) { $Agent = $a; break }
+    }
 }
+if (-not $Agent) {
+    throw "open-project.ps1: no agent CLI found. Install at least one of grok / kimi / codex / deepseek."
+}
+if ($Agent -notin @('grok', 'kimi', 'codex', 'deepseek')) {
+    throw "open-project.ps1: unknown agent '$Agent' (expected grok/kimi/codex/deepseek) — fix the 3rd column in $rootsFile"
+}
+$agentExe = Resolve-AgentExe $Agent
+if (-not $agentExe) {
+    throw "$Agent CLI not found. Install it, pass -Agent with an installed agent (grok/kimi/codex/deepseek), or fix the 3rd column in $rootsFile."
+}
+
+# Unified semantics with Install-WZ.ps1: the bound row gets an EXPLICIT 3rd
+# agent column recording the effective agent of this run.
+Update-DeskRootBinding -RootPath $ProjectRoot -ProjectName $bindName -Agent $Agent
 
 $wez = $null
 foreach ($c in @(
@@ -126,19 +202,84 @@ foreach ($c in @(
 }
 
 Write-Host "Project : $ProjectRoot"
-Write-Host "Grok    : $grok"
+Write-Host ("Agent   : {0} ({1})" -f $Agent, $agentExe)
 Write-Host "WezTerm : $wez"
 
-$prog = @($grok)
-if ($Dashboard) {
-    $prog += "dashboard"
-} else {
-    $prog += @("--cwd", $ProjectRoot)
-    if ($Continue) {
-        $prog += "--continue"
+$prog = @()
+if ($Agent -eq 'grok') {
+    $prog = @($agentExe)
+    if ($Dashboard) {
+        $prog += "dashboard"
+    } else {
+        $prog += @("--cwd", $ProjectRoot)
+        if ($Continue) {
+            $prog += "--continue"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($Prompt)) {
+            $prog += $Prompt
+        }
     }
-    if (-not [string]::IsNullOrWhiteSpace($Prompt)) {
-        $prog += $Prompt
+} else {
+    # D-004: kimi has no --cwd; codex has -C but the workbench uniformly uses
+    # process cwd — identity = process cwd set by
+    # `wezterm cli spawn --cwd <path> --` (and -WorkingDirectory fallbacks).
+    if ($Dashboard) {
+        Write-Host "WARNING: -Dashboard is grok-only; ignored for -Agent $Agent" -ForegroundColor Yellow
+    }
+    $cliArgs = @()
+    switch ($Agent) {
+        'kimi' {
+            if ($Continue) {
+                # Same-model handover: resume most recent session in this cwd
+                $cliArgs += "--continue"
+            }
+            if (-not [string]::IsNullOrWhiteSpace($Prompt)) {
+                # Verified via `kimi --help`: -p/--prompt runs ONE prompt
+                # non-interactively, prints the response, then exits.
+                $cliArgs += @("-p", $Prompt)
+                Write-Host "NOTE: kimi -p is one-shot non-interactive; the pane content ends when it finishes." -ForegroundColor Yellow
+            }
+        }
+        'codex' {
+            if ($Continue) {
+                # Verified via `codex resume --help`: resume --last [PROMPT]
+                # continues the most recent session (cwd-filtered).
+                $cliArgs += @("resume", "--last")
+                if (-not [string]::IsNullOrWhiteSpace($Prompt)) {
+                    $cliArgs += $Prompt
+                }
+            } elseif (-not [string]::IsNullOrWhiteSpace($Prompt)) {
+                # Verified via `codex --help`: positional [PROMPT] starts the
+                # session with that prompt.
+                $cliArgs += $Prompt
+            }
+        }
+        'deepseek' {
+            if ($Continue) {
+                # Verified via `deepseek --help` (0.5.0): --continue/--resume
+                # loads the saved session for process.cwd() before running.
+                $cliArgs += "--continue"
+            }
+            if (-not [string]::IsNullOrWhiteSpace($Prompt)) {
+                # Positional [prompt...] = one-shot (prints, exits).
+                $cliArgs += $Prompt
+                Write-Host "NOTE: deepseek positional prompt is one-shot; the pane content ends when it finishes." -ForegroundColor Yellow
+            }
+        }
+        default {
+            if ($Continue -or -not [string]::IsNullOrWhiteSpace($Prompt)) {
+                Write-Host "WARNING: -Continue/-Prompt not mapped for agent '$Agent'; ignored." -ForegroundColor Yellow
+            }
+        }
+    }
+    if ($agentExe -match '\.exe$') {
+        $prog = @($agentExe) + $cliArgs
+    } else {
+        # .cmd / extensionless shim cannot be argv0 of CreateProcess — go
+        # through a PowerShell host (same pattern as bootstrap.ps1 codex).
+        $cmdLine = "& '$($agentExe -replace "'", "''")'"
+        foreach ($a in $cliArgs) { $cmdLine += " '$($a -replace "'", "''")'" }
+        $prog = @("powershell.exe", "-NoLogo", "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $cmdLine)
     }
 }
 
@@ -181,5 +322,7 @@ if ($NewWindow -and $wez) {
 }
 
 # Last resort (no wezterm): still avoid silent double-console if possible
-Write-Host "WARNING: WezTerm not found; starting grok in a bare console (not a WezTerm tab)."
-Start-Process -FilePath $grok -ArgumentList (@("--cwd", $ProjectRoot) + @($Prompt | Where-Object { $_ })) -WorkingDirectory $ProjectRoot | Out-Null
+Write-Host "WARNING: WezTerm not found; starting $Agent in a bare console (not a WezTerm tab)."
+$restArgs = @()
+if ($prog.Count -gt 1) { $restArgs = $prog[1..($prog.Count - 1)] }
+Start-Process -FilePath $prog[0] -ArgumentList $restArgs -WorkingDirectory $ProjectRoot | Out-Null

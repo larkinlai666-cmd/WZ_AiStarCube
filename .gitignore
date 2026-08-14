@@ -26,3 +26,10 @@ live-workbench/workbench/favorites.txt
 
 # Accidental nested clone of this repo (never commit)
 /WZ_AiStarCube/
+
+# Hardening smoke generated outputs (tooling scripts stay tracked)
+prototypes/**/__pycache__/
+prototypes/hardening-smoke/wz-out*.txt
+prototypes/hardening-smoke/wz-err*.txt
+prototypes/hardening-smoke/wez-cfg-check.txt
+prototypes/hardening-smoke/*.png

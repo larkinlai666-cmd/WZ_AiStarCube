@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   One-shot installer: make this machine's WezTerm match WZ_AiStarCube workbench.
@@ -43,23 +43,46 @@ function Test-CommandExists([string]$Name) {
   return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
-function Resolve-GrokExe {
-  $cmd = Get-Command grok -ErrorAction SilentlyContinue
+# Agents are peers (grok / kimi / codex) — none is a hard prerequisite.
+# Resolve order per agent: PATH first, then well-known install locations.
+# Note: LOCALAPPDATA / ProgramFiles can be EMPTY in stripped environments
+# (spawned shells, CI) — Join-Path $null crashes the whole Doctor.
+function Resolve-AgentExe([string]$Name) {
+  $cmd = Get-Command $Name -ErrorAction SilentlyContinue
   if ($cmd -and $cmd.Source -and (Test-Path -LiteralPath $cmd.Source)) { return $cmd.Source }
-  foreach ($c in @(
-      (Join-Path $env:USERPROFILE ".grok\bin\grok.exe"),
-      (Join-Path $env:LOCALAPPDATA "Programs\grok\grok.exe")
-    )) {
+  $candidates = @()
+  $la = $env:LOCALAPPDATA
+  switch ($Name) {
+    'grok' {
+      $candidates += (Join-Path $env:USERPROFILE ".grok\bin\grok.exe")
+      if ($la) { $candidates += (Join-Path $la "Programs\grok\grok.exe") }
+    }
+    'kimi' {
+      $candidates += (Join-Path $env:USERPROFILE ".kimi-code\bin\kimi.exe")
+      $candidates += (Join-Path $env:USERPROFILE ".kimi-code\bin\kimi.cmd")
+    }
+    'codex' {
+      # WinGet shim links (codex is typically a .cmd shim here)
+      if ($la) {
+        $candidates += (Join-Path $la "Microsoft\WinGet\Links\codex.exe")
+        $candidates += (Join-Path $la "Microsoft\WinGet\Links\codex.cmd")
+      }
+    }
+  }
+  foreach ($c in $candidates) {
     if ($c -and (Test-Path -LiteralPath $c)) { return $c }
   }
   return $null
 }
 
 function Resolve-WezExe {
-  foreach ($c in @(
-      (Join-Path $env:ProgramFiles "WezTerm\wezterm.exe"),
-      (Get-Command wezterm -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
-    )) {
+  $candidates = @()
+  if ($env:ProgramFiles) { $candidates += (Join-Path $env:ProgramFiles "WezTerm\wezterm.exe") }
+  $pf86 = ${env:ProgramFiles(x86)}
+  if ($pf86) { $candidates += (Join-Path $pf86 "WezTerm\wezterm.exe") }
+  $wezCmd = Get-Command wezterm -ErrorAction SilentlyContinue
+  if ($wezCmd) { $candidates += $wezCmd.Source }
+  foreach ($c in $candidates) {
     if ($c -and (Test-Path -LiteralPath $c)) { return $c }
   }
   return $null
@@ -69,10 +92,11 @@ function Invoke-Doctor {
   Write-Step "Doctor (preflight)"
   $fail = 0
 
-  if ($env:OS -notmatch "Windows") {
+  if ($env:OS -and $env:OS -notmatch "Windows") {
     Write-Bad "This workbench snapshot targets Windows + PowerShell + WezTerm."
     $fail++
   } else {
+    # empty $env:OS = stripped spawn env, not a non-Windows host
     Write-Ok "Windows host"
   }
 
@@ -82,10 +106,23 @@ function Invoke-Doctor {
     $fail++
   }
 
-  $grok = Resolve-GrokExe
-  if ($grok) { Write-Ok "Grok CLI: $grok" } else {
-    Write-Bad "Grok Build CLI not found (PATH or ~/.grok/bin/grok.exe)."
-    Write-Warn "Workbench UI still installs; AI tabs need Grok to be useful."
+  # Agents are peers: at least ONE of grok/kimi/codex must be usable.
+  # A missing grok only warns — kimi/codex-only setups are fully supported.
+  $foundAgents = @()
+  foreach ($a in @('grok', 'kimi', 'codex')) {
+    $exe = Resolve-AgentExe $a
+    if ($exe) {
+      Write-Ok "$a CLI: $exe"
+      $foundAgents += $a
+    } elseif ($a -eq 'grok') {
+      Write-Warn "grok CLI not found — fine if you only use kimi/codex (可只用 kimi/codex)"
+    } else {
+      Write-Warn "$a CLI not found"
+    }
+  }
+  if ($foundAgents.Count -eq 0) {
+    Write-Bad "No agent CLI found (grok / kimi / codex). Install at least one."
+    Write-Warn "Workbench UI still installs; AI tabs need an agent CLI to be useful."
     $fail++
   }
 
@@ -118,6 +155,9 @@ function Invoke-Doctor {
   } elseif ($env:WZ_PROJECTS_ROOT) {
     Write-Ok "env WZ_PROJECTS_ROOT=$($env:WZ_PROJECTS_ROOT)"
   } else {
+    # NOTE: "GrokProjects"/"GrokProject" is a HISTORICAL name kept for backward
+    # compatibility with existing installs — the default root is agent-neutral
+    # in practice. Do not rename the path itself (would orphan existing roots).
     Write-Warn "No WZ_PROJECTS_ROOT — new projects default to Documents\GrokProjects or existing *:\GrokProject"
   }
 
@@ -202,27 +242,51 @@ function Bind-ThisRepo {
     Write-Warn "Repo folder name '$name' is reserved — binding as WZ_AiStarCube"
     $name = "WZ_AiStarCube"
   }
+  # Unified semantics with open-project.ps1: the row we BIND gets an explicit
+  # 3rd agent column (first available of grok/kimi/codex). Rows we did not
+  # touch keep whatever they had (legacy 2-column rows stay 2-column).
+  $bindAgent = ""
+  foreach ($a in @('grok', 'kimi', 'codex')) {
+    if (Resolve-AgentExe $a) { $bindAgent = $a; break }
+  }
   $roots = Join-Path $WbDst "desk-roots.tsv"
   $map = [ordered]@{}
+  $agentMap = @{}
   if (Test-Path -LiteralPath $roots) {
     foreach ($line in Get-Content -LiteralPath $roots -ErrorAction SilentlyContinue) {
       $t = $line.Trim()
       if ($t -eq "" -or $t.StartsWith("#")) { continue }
-      $parts = $t -split "`t", 2
+      # tolerate 2 or 3 TAB columns (name, path, optional agent)
+      $parts = $t -split "`t"
       if ($parts.Count -lt 2) { $parts = $t -split "\s+", 2 }
-      if ($parts.Count -ge 2) { $map[$parts[0]] = $parts[1].TrimEnd('\') }
+      if ($parts.Count -ge 2) {
+        $map[$parts[0]] = $parts[1].TrimEnd('\')
+        if ($parts.Count -ge 3 -and $parts[2].Trim()) {
+          $agentMap[$parts[0]] = $parts[2].Trim().ToLowerInvariant()
+        }
+      }
     }
   }
   $pk = $RepoRoot.TrimEnd('\').ToLowerInvariant()
   foreach ($k in @($map.Keys)) {
-    if ($map[$k].TrimEnd('\').ToLowerInvariant() -eq $pk -and $k -ne $name) { $map.Remove($k) }
+    if ($map[$k].TrimEnd('\').ToLowerInvariant() -eq $pk -and $k -ne $name) {
+      $map.Remove($k)
+      $agentMap.Remove($k)
+    }
   }
   $map[$name] = $RepoRoot
+  if ($bindAgent) { $agentMap[$name] = $bindAgent }
   $out = @(
-    "# AI STAR CUBE desk roots - project_name<TAB>absolute_path",
-    "# Bound by Install-WZ.ps1"
+    "# AI STAR CUBE desk roots - project_name<TAB>absolute_path[<TAB>agent]",
+    "# Bound by Install-WZ.ps1 — optional 3rd column agent: grok / kimi / codex (peers)"
   )
-  foreach ($k in ($map.Keys | Sort-Object)) { $out += ($k + "`t" + $map[$k]) }
+  foreach ($k in ($map.Keys | Sort-Object)) {
+    if ($agentMap.Contains($k)) {
+      $out += ($k + "`t" + $map[$k] + "`t" + $agentMap[$k])
+    } else {
+      $out += ($k + "`t" + $map[$k])
+    }
+  }
   $utf8 = New-Object System.Text.UTF8Encoding $false
   [System.IO.File]::WriteAllLines($roots, $out, $utf8)
 
@@ -268,9 +332,9 @@ Write-Step "Next steps" "Yellow"
 Write-Host @"
   1. Restart WezTerm (or press Ctrl+Shift+R to reload config).
   2. You should land on the Init panel (task table).
-  3. Enter = open/resume bound project ·  c = create NEW project (path freezes).
-  4. F9 switch project · F6 AI desk · F7 Explorer · F8 cheatsheet.
-  5. Leader is Alt+z then a letter (NOT Alt+; — IME-safe).
+  3. Enter = pick task row → pick agent in 2 AGENT zone ·  c = create NEW project (path freezes).
+  4. F1 cheatsheet · F3 new-project wizard · F6 AI desk · F7 Explorer · F4 close pane.
+  5. F5 (or Ctrl+Shift+R) reloads config; no Leader layer (IME-safe, F2 left to agents).
   6. Optional: open this repo with correct cwd:
        powershell -ExecutionPolicy Bypass -File .\open-project.ps1
 

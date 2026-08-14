@@ -14,8 +14,8 @@
 - Capsule: CONTEXT.md
 - Coverage: CONTEXT.md
 - Blockers: none
-- Next: User approve MAIN acceptance checklist; live smoke A1–C4 after Ctrl+F5. Skill packaging deferred (D-002).
-- Updated: 2026-08-09T08:15:00Z
+- Next: User: 审阅加固审查 R2（docs/hardening-review-2.md，P-011：M×6/L×8，M2-6 启动菜单裸 agent 需裁决 A/B）→ 批准施工范围；另 wezterm 完全重开后终验（① 猫动画播完清屏无残留；② 亮黄=芯片+输入前缀专属；③ DeepSeek 402 充值后可用）→ F6 三栏形态定夺 → 批准验收清单（P-006 → D）→ 逐项打勾 A1–C4.
+- Updated: 2026-08-14T14:39:00Z
 - Device: SK-20240507HWFH
 
 ## Objective

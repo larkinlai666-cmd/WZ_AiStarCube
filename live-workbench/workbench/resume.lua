@@ -52,12 +52,13 @@ function M.show_new_project(window, pane)
   toast(
     window,
     "新建本地项目",
-    "名 → 选父目录 → 确认冻结 → 开 Grok  |  q 取消",
+    "名 → 选父目录 → 确认冻结 → 开 AI 对话  |  q 取消",
     5000
   )
 end
 
 --- Continue latest session for current tab project (fast path)
+--- D-004: dispatch by the task's agent (desk-roots 3rd column); grok 兜底
 function M.continue_current(window, pane)
   local name, root = desk.resolve_tab_task(window, pane)
   if not desk.is_strong_path(root) then
@@ -65,7 +66,19 @@ function M.continue_current(window, pane)
     M.show_hub(window, pane)
     return
   end
-  local args = launch.grok_continue_args(root)
+  local agent = desk.agent_for_path(root) or "grok"
+  -- M-1 (D-005): check the RESOLVED agent, not just grok — a bound-but-
+  -- uninstalled CLI must toast here instead of dying in a new tab.
+  if not launch.has_agent(agent) then
+    toast(
+      window,
+      "继续对话",
+      "未找到 " .. agent .. " CLI — 请在 desk-roots 第三列改绑已安装 agent（grok/kimi/codex/deepseek）",
+      5000
+    )
+    return
+  end
+  local args = launch.agent_args(agent, root, { continue_session = true })
   local mux_window = window:mux_window()
   local tab, main = mux_window:spawn_tab({
     args = args,
@@ -84,7 +97,15 @@ function M.continue_current(window, pane)
       desk.set_root(pname, root)
     end
   end
-  toast(window, "继续对话", "grok -c · " .. pname .. " · " .. desk.short_path(root, 36), 3500)
+  local resume_cmd = "grok -c"
+  if agent == "kimi" then
+    resume_cmd = "kimi --continue"
+  elseif agent == "codex" then
+    resume_cmd = "codex resume --last"
+  elseif agent == "deepseek" then
+    resume_cmd = "deepseek --continue"
+  end
+  toast(window, "继续对话", resume_cmd .. " · " .. pname .. " · " .. desk.short_path(root, 36), 3500)
 end
 
 --- Used by gui-startup: should first window be the bootstrap panel?
@@ -95,7 +116,7 @@ function M.should_bootstrap_on_startup(cmd)
     if a0:find("bootstrap.ps1", 1, true) then
       return false -- already bootstrapping
     end
-    if a0:find("grok", 1, true) or a0:find("codex", 1, true) then
+    if a0:find("grok", 1, true) or a0:find("kimi", 1, true) or a0:find("codex", 1, true) or a0:find("deepseek", 1, true) then
       return false
     end
     -- bare powershell / pwsh without our panel → still show bootstrap as home

@@ -12,7 +12,7 @@
 
 - Setup: none
 - Environment verify: none
-- Verify: replace with the smallest deterministic project check
+- Verify: powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1; powershell -ExecutionPolicy Bypass -File scripts/wezterm_load_guard.ps1
 - Preview: none
 
 ## Environment Rules

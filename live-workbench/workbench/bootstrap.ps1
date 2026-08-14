@@ -1,8 +1,9 @@
-# WZ-AiWorkBench Task Init Panel (v4)
+﻿# WZ-AiWorkBench Task Init Panel (v4)
 # ============================================================================
 # HARD GATES (keep in sync with desk.lua)
 # ============================================================================
-# R1  Grok for real work MUST use --cwd <strong project path>. Never bare home.
+# R1  AI CLIs for real work MUST run with a strong project path as cwd
+#     (grok --cwd / codex -C,--cd / kimi process cwd). Never bare home.
 # R2  Weak/system paths are NEVER a project root (home/Desktop/Documents root/…).
 # R3  「项目名」= desk-roots LEFT column (binding name), NOT session title / cwd leaf.
 # R4  「项目路径」= desk-roots RIGHT column; frozen at create/bind; .wz-project reinforces.
@@ -15,7 +16,8 @@
 # R-UI-3  Actionable chips = White / Yellow / Cyan (high contrast).
 #
 # List: strong desk-roots TASK + favorites + titled recent (weak demoted).
-# New task: F3 / Init c → name → parent (choice-first) → freeze → open Grok --cwd.
+# New task: F3 / Init c → name → parent (choice-first) → CLI → default agent (D-004)
+#           → freeze (desk-roots optional 3rd col = agent) → open in project cwd.
 param(
   [switch]$All,
   # F3 / dedicated entry: run create wizard only, then exit (no Init table loop)
@@ -45,19 +47,34 @@ $script:RecentDays    = 45
 $script:ShowAll       = [bool]$All
 $script:Selected      = 0
 $script:Rows          = @()
+$script:RowsDirty     = $true   # rebuild row data only when dirty
+$script:ScreenDirty   = $true   # D-009: repaint ONLY when a command changed state
+$script:LoadBarY      = -1     # screen line of the loading bar; -1 = no loading screen
+$script:LoadFrame     = 0
+$script:LoadLastDraw  = $null
 $script:Wez           = $null
 $script:BufH          = 40
 $script:DrawnLines    = 0
 $script:DeskRoots     = [ordered]@{}
+$script:DeskAgents    = @{}   # D-004: name -> agent (optional desk-roots 3rd column)
 $script:StatusHint    = ''
+# Two-step launch on ONE screen (user directive 2026-08-13), D-009 line-input:
+# the screen is STATIC — redrawn only on state transitions (arm/launch/cancel/
+# refresh). NO per-keystroke repaint, NO cursor: two ConPTY renderer attempts
+# (blank+repaint, overwrite) both flickered; user ruled stability > cursor.
+# Both steps share one grammar: <num>+Enter = pick · Enter alone = default ·
+# q = back. Read-Host does the buffering; there is nothing to repaint mid-type.
+$script:PendingRow      = $null
+$script:PendingForceNew = $false
+$script:PendingLaunch   = $null
 $script:ReservedNames = @(
   'home', 'desktop', 'documents', 'downloads', 'pictures', 'music', 'videos',
   'administrator', 'users', 'temp', 'tmp', 'appdata', 'windows', 'system32',
-  'config', '.grok', '.config', 'wezterm', 'my documents', 'onedrive'
+  'config', '.grok', '.kimi-code', '.codex', '.config', 'wezterm', 'my documents', 'onedrive'
 )
 
 foreach ($c in @(
-    (Join-Path $env:ProgramFiles 'WezTerm\wezterm.exe'),
+    $(if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'WezTerm\wezterm.exe' }),
     (Get-Command wezterm -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
   )) {
   if ($c -and (Test-Path -LiteralPath $c)) { $script:Wez = $c; break }
@@ -65,6 +82,7 @@ foreach ($c in @(
 
 function Get-DefaultProjectsParent {
   # Portable: env override → existing *:\GrokProject → Documents\GrokProjects
+  # "GrokProject*" is a historical name kept for existing installs (now multi-agent)
   if ($env:WZ_PROJECTS_ROOT -and $env:WZ_PROJECTS_ROOT.Trim()) {
     return $env:WZ_PROJECTS_ROOT.Trim().TrimEnd('\')
   }
@@ -84,8 +102,8 @@ function Resolve-GrokExe {
   } catch {}
   foreach ($c in @(
       (Join-Path $env:USERPROFILE '.grok\bin\grok.exe'),
-      (Join-Path $env:LOCALAPPDATA 'Programs\grok\grok.exe'),
-      (Join-Path $env:ProgramFiles 'grok\grok.exe')
+      $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\grok\grok.exe' }),
+      $(if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'grok\grok.exe' })
     )) {
     if ($c) { [void]$list.Add($c) }
   }
@@ -151,6 +169,21 @@ function Pad-Display {
   return $Text + $spaces
 }
 
+function Limit-Display {
+  # Hard truncate to MaxWidth display cells; NO '~' marker. Frame safety net:
+  # used where overflowing the box border is worse than losing tail content.
+  param([string]$Text, [int]$MaxWidth)
+  if ($null -eq $Text -or $MaxWidth -le 0) { return '' }
+  if ((Get-DisplayWidth $Text) -le $MaxWidth) { return $Text }
+  $acc = ''
+  foreach ($ch in $Text.ToCharArray()) {
+    $try = $acc + $ch
+    if ((Get-DisplayWidth $try) -gt $MaxWidth) { return $acc }
+    $acc = $try
+  }
+  return $acc
+}
+
 function Test-WezAlive {
   return $null -ne (Get-Process -Name 'wezterm-gui' -ErrorAction SilentlyContinue | Select-Object -First 1)
 }
@@ -166,7 +199,7 @@ function ConvertFrom-IsoTime {
 
 function Format-DateTime {
   param($Dt)
-  if (-not $Dt) { return '---- -- --:--' }
+  if (-not $Dt) { return '---- -- --' }  # fits Date col (min 10); old 13-char form overflowed to '---- -- ~'
   $now = Get-Date
   if ($Dt.Year -eq $now.Year) { return $Dt.ToString('MM-dd HH:mm') }
   return $Dt.ToString('yy-MM-dd HH:mm')
@@ -308,15 +341,20 @@ function Resolve-ProjectName {
 
 function Read-DeskRoots {
   $map = [ordered]@{}
+  $script:DeskAgents = @{}
   if (-not (Test-Path -LiteralPath $script:RootsFile)) { return $map }
   try {
     foreach ($line in Get-Content -LiteralPath $script:RootsFile -Encoding UTF8 -ErrorAction SilentlyContinue) {
       $t = $line.Trim()
       if ($t -eq '' -or $t.StartsWith('#')) { continue }
-      $parts = $t -split "`t", 2
+      # D-004: tolerate 2 or 3 TAB columns (name, path, optional agent)
+      $parts = $t -split "`t"
       if ($parts.Count -lt 2) { $parts = $t -split '\s+', 2 }
       if ($parts.Count -ge 2 -and $parts[0] -and $parts[1]) {
         $map[$parts[0].Trim()] = $parts[1].Trim().TrimEnd('\')
+        if ($parts.Count -ge 3 -and $parts[2].Trim()) {
+          $script:DeskAgents[$parts[0].Trim()] = $parts[2].Trim().ToLowerInvariant()
+        }
       }
     }
   } catch {}
@@ -324,28 +362,38 @@ function Read-DeskRoots {
 }
 
 function Write-DeskRoots {
-  param($Map)
+  param($Map, [hashtable]$Agents)
   $dir = Split-Path -Parent $script:RootsFile
   if (-not (Test-Path -LiteralPath $dir)) {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
   }
   $lines = @(
-    '# AI STAR CUBE desk roots - project_name<TAB>absolute_path',
+    '# AI STAR CUBE desk roots - project_name<TAB>absolute_path[<TAB>agent]',
     '# 项目名(绑定名) 与 项目路径 写死绑定；Explorer / 状态栏 / F6 / Init 共用',
-    '# 弱路径(home/Desktop/…)与保留名不得写入'
+    '# 弱路径(home/Desktop/…)与保留名不得写入',
+    '# 可选第三列 agent: grok(缺省) / kimi / codex (D-004)'
   )
   foreach ($k in ($Map.Keys | Sort-Object)) {
     $p = $Map[$k]
     if ((Test-ReservedName -Name $k)) { continue }
     if (-not (Test-StrongProjectPath -Cwd $p)) { continue }
-    $lines += ($k + "`t" + $p)
+    $a = $null
+    if ($Agents -and $Agents.Contains($k)) { $a = ([string]$Agents[$k]).Trim().ToLowerInvariant() }
+    # D-005: ALWAYS write the agent column explicitly (incl. grok 缺省) —
+    # dropping it let the row drift to first-installed agent after uninstall;
+    # Read-DeskRoots still tolerates legacy 2-col rows from older writers.
+    if (-not $a) { $a = 'grok' }
+    $lines += ($k + "`t" + $p + "`t" + $a)
   }
+  # L-3: atomic temp+move — never truncate the bindings file in place
   $utf8 = New-Object System.Text.UTF8Encoding $false
-  [System.IO.File]::WriteAllLines($script:RootsFile, $lines, $utf8)
+  $tmp = $script:RootsFile + '.tmp'
+  [System.IO.File]::WriteAllLines($tmp, $lines, $utf8)
+  Move-Item -LiteralPath $tmp -Destination $script:RootsFile -Force
 }
 
 function Set-DeskRootBinding {
-  param([string]$Name, [string]$Path)
+  param([string]$Name, [string]$Path, [string]$Agent = '')
   $Name = $Name.Trim()
   $Path = $Path.Trim().TrimEnd('\')
   if (Test-ReservedName -Name $Name) {
@@ -364,8 +412,17 @@ function Set-DeskRootBinding {
   foreach ($k in @($map.Keys)) {
     if ((Normalize-PathKey $map[$k]) -eq $pk -and $k -ne $Name) { $map.Remove($k) }
   }
+  # D-004: keep existing agent column for surviving rows
+  $agents = @{}
+  foreach ($k in $map.Keys) {
+    if ($script:DeskAgents -and $script:DeskAgents.Contains($k)) {
+      $agents[$k] = [string]$script:DeskAgents[$k]
+    }
+  }
+  $Agent = $Agent.Trim().ToLowerInvariant()
+  if ($Agent) { $agents[$Name] = $Agent }
   $map[$Name] = $Path
-  Write-DeskRoots -Map $map
+  Write-DeskRoots -Map $map -Agents $agents
   $script:DeskRoots = Read-DeskRoots
   # freeze identity on disk so reopen never invents another name
   try { Write-WzProjectMarker -Name $Name -Path $Path } catch {}
@@ -403,9 +460,9 @@ function Get-ModelDisplay {
   if ([string]::IsNullOrWhiteSpace($ModelId)) { return '' }
   $m = $ModelId.Trim()
   if ($m -eq '-' -or $m -eq 'n/a' -or $m -eq 'none') { return '' }
-  if ($m -match '(?i)grok|gpt|claude|gemini|o1|o3|llm|anthropic|openai|xai') { return $m }
+  if ($m -match '(?i)grok|gpt|claude|gemini|o1|o3|llm|anthropic|openai|xai|kimi|moonshot') { return $m }
   if ($m -match '[A-Za-z]' -and $m -match '\d') { return $m }
-  if ($AgentName -and $AgentName -match '(?i)grok|codex|agent|build|plan') { return $m }
+  if ($AgentName -and $AgentName -match '(?i)grok|codex|kimi|agent|build|plan') { return $m }
   if ($m -match '^(cmd|shell|powershell|bash|pwsh)$') { return '' }
   return $m
 }
@@ -458,91 +515,14 @@ function Get-RecentPrompts {
   return @($out)
 }
 
-function Get-ProjectStateHint {
-  param([string]$ProjectPath)
-  if (-not $ProjectPath -or -not (Test-Path -LiteralPath $ProjectPath)) { return $null }
-  $state = Join-Path $ProjectPath 'PROJECT_STATE.md'
-  if (-not (Test-Path -LiteralPath $state)) { return $null }
-  try {
-    $lines = Get-Content -LiteralPath $state -Encoding UTF8 -ErrorAction SilentlyContinue
-    $next = $null
-    $obj = $null
-    $pkg = $null
-    foreach ($ln in $lines) {
-      if ($ln -match '^\s*-\s*Next:\s*(.+)\s*$') { $next = $Matches[1].Trim() }
-      if ($ln -match '^\s*-\s*Package:\s*(.+)\s*$') { $pkg = $Matches[1].Trim() }
-      if (-not $obj -and $ln -match '^##\s+Objective') { $obj = 'see' }
-      elseif ($obj -eq 'see' -and $ln.Trim() -ne '' -and $ln -notmatch '^#') {
-        $obj = $ln.Trim()
-        if ($obj.Length -gt 160) { $obj = $obj.Substring(0, 157) + '...' }
-      }
-    }
-    return [pscustomobject]@{ Next = $next; Objective = $obj; Package = $pkg }
-  } catch { return $null }
-}
-
-function Format-RelativeTime {
-  param($Dt)
-  if (-not $Dt) { return '-' }
-  try {
-    $span = (Get-Date) - [DateTime]$Dt
-    if ($span.TotalMinutes -lt 1) { return 'just now' }
-    if ($span.TotalMinutes -lt 60) { return ('{0:N0}m ago' -f $span.TotalMinutes) }
-    if ($span.TotalHours -lt 24) { return ('{0:N0}h ago' -f $span.TotalHours) }
-    if ($span.TotalDays -lt 14) { return ('{0:N0}d ago' -f $span.TotalDays) }
-    return Format-DateTime $Dt
-  } catch { return Format-DateTime $Dt }
-}
-
-function Write-BoxWrapped {
-  param(
-    [string]$Label,
-    [string]$Text,
-    [ConsoleColor]$Fg = [ConsoleColor]::Gray,
-    [int]$MaxLines = 4
-  )
-  if ([string]::IsNullOrWhiteSpace($Text)) { return }
-  $inner = Get-InnerWidth
-  $labW = 11
-  $textW = $inner - $labW - 3
-  if ($textW -lt 20) { $textW = 20 }
-  $Text = ($Text -replace '[\r\n]+', ' ').Trim()
-  $chunks = New-Object System.Collections.Generic.List[string]
-  $rest = $Text
-  while ($rest.Length -gt 0 -and $chunks.Count -lt $MaxLines) {
-    if ((Get-DisplayWidth $rest) -le $textW) {
-      $chunks.Add($rest) | Out-Null
-      $rest = ''
-      break
-    }
-    # take by display width approx via char walk
-    $acc = ''
-    foreach ($ch in $rest.ToCharArray()) {
-      $try = $acc + $ch
-      if ((Get-DisplayWidth $try) -gt $textW) { break }
-      $acc = $try
-    }
-    if ($acc.Length -lt 1) { $acc = $rest.Substring(0, [Math]::Min(20, $rest.Length)) }
-    $chunks.Add($acc) | Out-Null
-    $rest = $rest.Substring($acc.Length).TrimStart()
-  }
-  if ($rest.Length -gt 0 -and $chunks.Count -ge $MaxLines) {
-    $last = $chunks[$chunks.Count - 1]
-    $chunks[$chunks.Count - 1] = (Pad-Display -Text ($last.TrimEnd() + '...') -Width $textW)
-  }
-  for ($i = 0; $i -lt $chunks.Count; $i++) {
-    $lab = if ($i -eq 0) { Pad-Display -Text $Label -Width $labW } else { Pad-Display -Text '' -Width $labW }
-    $body = ' ' + $lab + ' ' + (Pad-Display -Text $chunks[$i] -Width $textW -NoTrim)
-    $body = Pad-Display -Text $body -Width $inner -NoTrim
-    Write-FullLine -Text ('  |' + $body + '|') -Fg $Fg
-  }
-}
-
 function Read-SessionSummaries {
   $rows = @()
   if (-not (Test-Path -LiteralPath $script:SessionsRoot)) { return $rows }
   $files = Get-ChildItem -LiteralPath $script:SessionsRoot -Recurse -Filter 'summary.json' -File -ErrorAction SilentlyContinue
+  $fi = 0
   foreach ($f in $files) {
+    $fi++
+    Update-LoadingBar -Current $fi -Total $files.Count -Label 'grok sessions'
     try {
       $j = Get-Content -LiteralPath $f.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
     } catch { continue }
@@ -581,6 +561,9 @@ function Read-SessionSummaries {
     $modelRaw = if ($j.current_model_id) { [string]$j.current_model_id } else { '' }
     $agent = if ($j.agent_name) { [string]$j.agent_name } else { '' }
     $model = Get-ModelDisplay -ModelId $modelRaw -AgentName $agent
+    # agent_name is a profile id ('grok-build-plan' etc.) — normalize to the CLI
+    # peer id so resume matching / D-005 resolution actually fire.
+    if ($agent -match '^(?i)grok') { $agent = 'grok' }
 
     $chatMsgs = 0
     if ($null -ne $j.num_chat_messages) { $chatMsgs = [int]$j.num_chat_messages }
@@ -614,6 +597,157 @@ function Read-SessionSummaries {
   return @($rows | Sort-Object Updated -Descending)
 }
 
+function Read-KimiSessionSummaries {
+  # D-004/F-011: Kimi Code CLI sessions (~/.kimi-code/sessions/wd_*/session_*/state.json).
+  # kimi has no --cwd/--resume: process cwd IS task identity; resume = `kimi --continue`,
+  # which only continues the LATEST session of that working dir — so keep only the newest
+  # session per wd_* directory (listing older ones would be misleading).
+  $rows = @()
+  $root = Join-Path $env:USERPROFILE '.kimi-code\sessions'
+  if (-not (Test-Path -LiteralPath $root)) { return $rows }
+  $wdDirs = Get-ChildItem -LiteralPath $root -Directory -Filter 'wd_*' -ErrorAction SilentlyContinue
+  $wi = 0
+  foreach ($wd in $wdDirs) {
+    $wi++
+    Update-LoadingBar -Current $wi -Total $wdDirs.Count -Label 'kimi sessions'
+    $best = $null
+    $sessDirs = Get-ChildItem -LiteralPath $wd.FullName -Directory -Filter 'session_*' -ErrorAction SilentlyContinue
+    foreach ($sd in $sessDirs) {
+      $sf = Join-Path $sd.FullName 'state.json'
+      if (-not (Test-Path -LiteralPath $sf)) { continue }
+      try {
+        $j = Get-Content -LiteralPath $sf -Raw -Encoding UTF8 | ConvertFrom-Json
+      } catch { continue }
+      if ($j.archived -eq $true) { continue }
+      $ms = 0
+      try { $ms = [int64]$j.updatedAt } catch { $ms = 0 }
+      if ($ms -le 0) { try { $ms = [int64]$j.createdAt } catch { $ms = 0 } }
+      if ($null -eq $best -or $ms -gt $best.Ms) {
+        $best = [pscustomobject]@{ Ms = $ms; J = $j; Dir = $sd.FullName }
+      }
+    }
+    if ($null -eq $best) { continue }
+    $j = $best.J
+
+    $id = if ($j.id) { [string]$j.id } else { Split-Path $best.Dir -Leaf }
+    $workPath = if ($j.cwd) { ([string]$j.cwd).Trim().Replace('/', '\').TrimEnd('\') } else { '' }
+
+    $updated = $null
+    if ($best.Ms -gt 0) {
+      try { $updated = [DateTimeOffset]::FromUnixTimeMilliseconds($best.Ms).LocalDateTime } catch { $updated = $null }
+    }
+    if (-not $updated) { $updated = (Get-Item -LiteralPath $best.Dir).LastWriteTime }
+
+    $lastPrompt = if ($j.lastPrompt) { [string]$j.lastPrompt } else { '' }
+    $title = if ($j.title) { [string]$j.title } else { '' }
+    if ([string]::IsNullOrWhiteSpace($title)) { $title = $lastPrompt }
+    if ([string]::IsNullOrWhiteSpace($title)) { $title = '' }
+
+    $proj = Resolve-ProjectName -Path $workPath -FallbackLeaf $(if ($workPath) { Split-Path -Leaf $workPath } else { '' })
+    $diskBytes = Get-SessionDiskBytes -SessionDir $best.Dir
+
+    $rows += [pscustomobject]@{
+      Kind = 'session'; Id = [string]$id; Cwd = [string]$workPath; Project = [string]$proj
+      Title = [string]$title; Model = 'Kimi'; Agent = 'kimi'
+      Msgs = 0; ChatMsgs = 0; TotalMsgs = 0
+      Branch = '-'; Effort = '-'; Updated = $updated
+      LastTurn = [string]$lastPrompt; Excerpt = [string]$lastPrompt; GitRoot = ''
+      DiskBytes = [long]$diskBytes; SessionDir = $best.Dir
+      SessionSummary = ''
+      RecentPrompts = @()
+      SessionCwd = [string]$workPath
+      IsWeak = [bool](Test-WeakPath -Cwd $workPath)
+    }
+  }
+  return @($rows | Sort-Object Updated -Descending)
+}
+
+function Read-CodexSessionSummaries {
+  # Codex CLI parity: sessions live in ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl;
+  # first line = session_meta (payload: id/cwd/timestamp/model_provider).
+  # ~/.codex/session_index.jsonl ({id,thread_name,updated_at} per line) supplies
+  # Title/Updated. `codex resume <id>` can restore ANY session (not just latest),
+  # so keep up to 3 newest per cwd (unlike kimi's 1-per-wd rule) to avoid noise.
+  $rows = @()
+  $root = Join-Path $env:USERPROFILE '.codex\sessions'
+  if (-not (Test-Path -LiteralPath $root)) { return $rows }
+
+  # Optional title/time index (id -> {thread_name, updated_at})
+  $index = @{}
+  $idxFile = Join-Path $env:USERPROFILE '.codex\session_index.jsonl'
+  if (Test-Path -LiteralPath $idxFile) {
+    foreach ($line in (Get-Content -LiteralPath $idxFile -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+      if ([string]::IsNullOrWhiteSpace($line)) { continue }
+      try { $o = $line | ConvertFrom-Json } catch { continue }
+      if ($o.id) { $index[[string]$o.id] = $o }
+    }
+  }
+
+  $files = Get-ChildItem -LiteralPath $root -Recurse -File -Filter 'rollout-*.jsonl' -ErrorAction SilentlyContinue
+  # Bounded work: newest 60 rollouts by file mtime is plenty for a resume list
+  # (keeps parse cost flat even if hundreds of stale rollouts accumulate).
+  if ($files.Count -gt 60) { $files = @($files | Sort-Object LastWriteTime -Descending | Select-Object -First 60) }
+  $ri = 0
+  foreach ($f in $files) {
+    $ri++
+    Update-LoadingBar -Current $ri -Total $files.Count -Label 'codex sessions'
+    # Only the first line is needed — never slurp whole rollouts
+    $first = Get-Content -LiteralPath $f.FullName -TotalCount 1 -Encoding UTF8 -ErrorAction SilentlyContinue
+    if (-not $first) { continue }
+    try { $j = $first | ConvertFrom-Json } catch { continue }
+    if ($j.type -ne 'session_meta' -or -not $j.payload) { continue }
+    $p = $j.payload
+
+    $id = if ($p.id) { [string]$p.id } else { '' }
+    if (-not $id) { continue }
+    $workPath = if ($p.cwd) { ([string]$p.cwd).Trim().Replace('/', '\').TrimEnd('\') } else { '' }
+    if (-not $workPath) { continue }
+
+    $idx = $null
+    if ($index.ContainsKey($id)) { $idx = $index[$id] }
+
+    $updated = $null
+    if ($idx -and $idx.updated_at) {
+      try { $updated = [DateTimeOffset]::Parse([string]$idx.updated_at).LocalDateTime } catch { $updated = $null }
+    }
+    if (-not $updated -and $p.timestamp) {
+      try { $updated = [DateTimeOffset]::Parse([string]$p.timestamp).LocalDateTime } catch { $updated = $null }
+    }
+    if (-not $updated) { $updated = $f.LastWriteTime }
+
+    $title = if ($idx -and $idx.thread_name) { [string]$idx.thread_name } else { '' }
+    $model = if ($p.model_provider) { [string]$p.model_provider } else { 'Codex' }
+
+    $proj = Resolve-ProjectName -Path $workPath -FallbackLeaf $(if ($workPath) { Split-Path -Leaf $workPath } else { '' })
+    $diskBytes = Get-SessionDiskBytes -SessionDir $f.DirectoryName
+
+    $rows += [pscustomobject]@{
+      Kind = 'session'; Id = [string]$id; Cwd = [string]$workPath; Project = [string]$proj
+      Title = [string]$title; Model = [string]$model; Agent = 'codex'
+      Msgs = 0; ChatMsgs = 0; TotalMsgs = 0
+      Branch = '-'; Effort = '-'; Updated = $updated
+      LastTurn = [string]$title; Excerpt = [string]$title; GitRoot = ''
+      DiskBytes = [long]$diskBytes; SessionDir = $f.DirectoryName
+      SessionSummary = ''
+      RecentPrompts = @()
+      SessionCwd = [string]$workPath
+      IsWeak = [bool](Test-WeakPath -Cwd $workPath)
+    }
+  }
+
+  # Cap at 3 newest per cwd
+  $kept = @()
+  $perCwd = @{}
+  foreach ($r in @($rows | Sort-Object Updated -Descending)) {
+    $k = ([string]$r.Cwd).ToLowerInvariant()
+    if (-not $perCwd.ContainsKey($k)) { $perCwd[$k] = 0 }
+    if ($perCwd[$k] -ge 3) { continue }
+    $perCwd[$k] = [int]$perCwd[$k] + 1
+    $kept += $r
+  }
+  return $kept
+}
+
 function Test-KeepUnboundSession {
   param($S, [bool]$ShowAll)
   if (Test-NoiseCwd -Cwd $S.Cwd) { return $false }
@@ -627,17 +761,108 @@ function Test-KeepUnboundSession {
   return $true
 }
 
+function Get-DeepSeekSessionHash {
+  # DeepSeek CLI session filename: sha256(path.resolve(cwd)) hex, first 16
+  # chars (see dist/session.js). Node path.resolve on Win = absolute path with
+  # backslashes; crypto.update(string) hashes UTF-8 bytes.
+  param([string]$Path)
+  try {
+    $p = [System.IO.Path]::GetFullPath([string]$Path)
+    # Node path.resolve strips a trailing separator (except drive root) — match it
+    if ($p.Length -gt 3) { $p = $p.TrimEnd('\') }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      $hex = [System.BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($p)))
+      $hex = $hex.Replace('-', '').ToLowerInvariant()
+    } finally { $sha.Dispose() }
+    return $hex.Substring(0, 16)
+  } catch { return '' }
+}
+
+function Read-DeepSeekSessionSummaries {
+  # F-014: one JSON per project cwd at ~/.deepseek-cli/sessions/<hash>.json —
+  # the hash is NOT invertible, so enumerate by hashing KNOWN candidate paths
+  # (desk-roots + favorites) and probing the store. Bound tasks (Layer A) get
+  # full resume parity; unbound-recents (Layer C) cannot list deepseek sessions
+  # (no path source to hash). Casing caveat: process.cwd() uses filesystem
+  # casing — a differently-cased desk-root just misses detection (shows
+  # "no session yet"), never a wrong row.
+  param([string[]]$Candidates)
+  $rows = @()
+  $root = Join-Path $env:USERPROFILE '.deepseek-cli\sessions'
+  if (-not (Test-Path -LiteralPath $root)) { return $rows }
+  if (-not $Candidates -or $Candidates.Count -eq 0) { return $rows }
+  $seenHash = @{}
+  $ci = 0
+  foreach ($cand in $Candidates) {
+    if ([string]::IsNullOrWhiteSpace([string]$cand)) { continue }
+    $h = Get-DeepSeekSessionHash -Path ([string]$cand)
+    if (-not $h -or $seenHash.ContainsKey($h)) { continue }
+    $seenHash[$h] = $true
+    $sf = Join-Path $root ($h + '.json')
+    if (-not (Test-Path -LiteralPath $sf)) { continue }
+    $ci++
+    Update-LoadingBar -Current $ci -Total $Candidates.Count -Label 'deepseek sessions'
+    $j = $null
+    try { $j = Get-Content -LiteralPath $sf -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
+    if ($null -eq $j -or $null -eq $j.messages) { continue }
+    $workPath = ([string]$cand).Trim().Replace('/', '\').TrimEnd('\')
+    $fi = Get-Item -LiteralPath $sf
+    $updated = $fi.LastWriteTime
+    $msgs = @($j.messages)
+    $lastPrompt = ''
+    for ($mi = $msgs.Count - 1; $mi -ge 0; $mi--) {
+      if (([string]$msgs[$mi].role) -eq 'user') {
+        $mc = $msgs[$mi].content
+        if ($mc -is [string]) { $lastPrompt = $mc } else { $lastPrompt = [string]($mc | ConvertTo-Json -Compress -Depth 4) }
+        break
+      }
+    }
+    if ($lastPrompt.Length -gt 120) { $lastPrompt = $lastPrompt.Substring(0, 120) }
+    $proj = Resolve-ProjectName -Path $workPath -FallbackLeaf $(if ($workPath) { Split-Path -Leaf $workPath } else { '' })
+    $rows += [pscustomobject]@{
+      Kind = 'session'; Id = [string]$h; Cwd = [string]$workPath; Project = [string]$proj
+      Title = [string]$lastPrompt; Model = 'DeepSeek'; Agent = 'deepseek'
+      Msgs = 0; ChatMsgs = 0; TotalMsgs = [int]$msgs.Count
+      Branch = '-'; Effort = '-'; Updated = $updated
+      LastTurn = [string]$lastPrompt; Excerpt = [string]$lastPrompt; GitRoot = ''
+      DiskBytes = [long]$fi.Length; SessionDir = $root
+      SessionSummary = ''
+      RecentPrompts = @()
+      SessionCwd = [string]$workPath
+      IsWeak = [bool](Test-WeakPath -Cwd $workPath)
+    }
+  }
+  return $rows
+}
+
 function Build-Rows {
   $script:DeskRoots = Read-DeskRoots
-  $sessions = Read-SessionSummaries
-  $out = @()
-  $i = 1
+  # D-004: merge sessions of the three peer agents; same Layer A/B/C matching.
+  # Perf gate (2026-08-13): only scan stores of agents actually installed —
+  # an uninstalled CLI's leftover files (e.g. old codex rollouts) taxed every
+  # panel open with a full recursive scan whose sessions can never be launched.
+  $peers = @{}
+  $peerIds = @()
+  foreach ($p in @(Get-InstalledAgentPeers)) { $peers[$p.Id] = $true; $peerIds += $p.Id }
+  $sessions = @()
+  if ($peers.Count -eq 0 -or $peers['grok'])  { $sessions += @(Read-SessionSummaries) }
+  if ($peers['kimi'])  { $sessions += @(Read-KimiSessionSummaries) }
+  if ($peers['codex']) { $sessions += @(Read-CodexSessionSummaries) }
+  if ($peers['deepseek']) {
+    # Hash-keyed store → probe with known candidate paths (bound + favorites)
+    $dsCands = @($script:DeskRoots.Values) + @(Read-Favorites)
+    $sessions += @(Read-DeepSeekSessionSummaries -Candidates $dsCands)
+  }
+  $sessions = @($sessions | Sort-Object Updated -Descending)
+  $layerA = @()
+  $layerB = @()
+  $layerC = @()
   $usedSessionIds = @{}
   $seenPath = @{}
 
   # Layer A: bound projects ONLY if strong path + non-reserved name (R2/R5)
   foreach ($name in $script:DeskRoots.Keys) {
-    if ($i -gt $script:MaxRows) { break }
     $path = $script:DeskRoots[$name]
     if (-not $path) { continue }
     if (Test-ReservedName -Name $name) { continue }
@@ -657,67 +882,78 @@ function Build-Rows {
     if ($best) {
       $usedSessionIds[$best.Id] = $true
       $seenPath[$pk] = $true
-      $out += [pscustomobject]@{
-        Index = $i; Kind = 'session'; Layer = 'bound'
+      $agentA = if ($best.Agent) { ([string]$best.Agent).ToLowerInvariant() } elseif ($script:DeskAgents.Contains($name)) { [string]$script:DeskAgents[$name] } else { '' }
+      if (-not $agentA -or -not $peers[$agentA]) { $agentA = if ($peerIds.Count -gt 0) { $peerIds[0] } else { '' } }
+      $resumeOk = ($best.Agent) -and (([string]$best.Agent).ToLowerInvariant() -eq $agentA)
+      $hintA = if ($resumeOk) { "Enter=resume($agentA)  n=new" } else { "Enter=new($agentA)  (last session was $($best.Agent))" }
+      $layerA += [pscustomobject]@{
+        Index = 0; Kind = 'session'; Layer = 'bound'
         Id = $best.Id; Cwd = $path; Project = $name
         Title = $best.Title; Model = $best.Model; Agent = $best.Agent
         Msgs = $best.Msgs; ChatMsgs = $best.ChatMsgs; TotalMsgs = $best.TotalMsgs
         Branch = $best.Branch; Effort = $best.Effort
         Updated = $best.Updated; LastTurn = $best.LastTurn; Excerpt = $best.Excerpt
-        Badge = 'TASK'; Hint = 'Enter=resume  n=new session'
+        Badge = 'TASK'; Hint = $hintA
         SessionDir = $best.SessionDir; SessionSummary = $best.SessionSummary
         RecentPrompts = $best.RecentPrompts; DiskBytes = $best.DiskBytes
         GitRoot = $best.GitRoot
         SessionCwd = $best.SessionCwd
         IsWeak = $false
+        LaunchAgent = $agentA; ForceNew = (-not $resumeOk)
       }
     } else {
       $seenPath[$pk] = $true
       $title = if ($exists) {
-        "[task] $name  - no session yet - Enter to open"
+        "[task] $name  - no session yet"
       } else {
         "[task] $name  - path missing - press c to recreate"
       }
-      $out += [pscustomobject]@{
-        Index = $i; Kind = 'project'; Layer = 'bound'
+      $agentP = if ($script:DeskAgents.Contains($name)) { [string]$script:DeskAgents[$name] } else { '' }
+      if (-not $agentP -or -not $peers[$agentP]) { $agentP = if ($peerIds.Count -gt 0) { $peerIds[0] } else { '' } }
+      $hintP = if ($agentP) { "Enter=open($agentP)  c=wizard" } else { 'Enter=open  c=wizard' }
+      $excerptP = if ($agentP) { "$agentP  (cwd: $path)" } else { $path }
+      $modelP = switch ($agentP) { 'kimi' { 'Kimi' } 'codex' { 'Codex' } 'deepseek' { 'DeepSeek' } 'grok' { 'Grok' } default { '' } }
+      $layerA += [pscustomobject]@{
+        Index = 0; Kind = 'project'; Layer = 'bound'
         Id = ''; Cwd = $path; Project = $name
-        Title = $title; Model = ''; Agent = ''; Msgs = 0
+        Title = $title; Model = $modelP; Agent = ''; Msgs = 0
         ChatMsgs = 0; TotalMsgs = 0
-        Branch = ''; Effort = ''; Updated = (Get-Date)
-        LastTurn = 'desk-roots binding'; Excerpt = "grok --cwd $path"
-        Badge = 'TASK'; Hint = 'Enter=open  c=wizard'
+        Branch = ''; Effort = ''; Updated = $null
+        LastTurn = 'desk-roots binding'; Excerpt = $excerptP
+        Badge = 'TASK'; Hint = $hintP
         SessionDir = ''; SessionSummary = ''; RecentPrompts = @(); DiskBytes = 0
         GitRoot = $path
         SessionCwd = ''; IsWeak = $false
+        LaunchAgent = $agentP; ForceNew = $true
       }
     }
-    $i++
   }
 
   # Layer B: favorites (strong only)
   foreach ($fav in (Read-Favorites)) {
-    if ($i -gt $script:MaxRows) { break }
     if (-not (Test-StrongProjectPath -Cwd $fav)) { continue }
     $pk = Normalize-PathKey $fav
     if ($seenPath.ContainsKey($pk)) { continue }
     $name = Resolve-ProjectName -Path $fav
     $seenPath[$pk] = $true
-    $out += [pscustomobject]@{
-      Index = $i; Kind = 'project'; Layer = 'fav'
+    $agentF = if ($peerIds.Count -gt 0) { $peerIds[0] } else { '' }
+    $hintF = if ($agentF) { "Enter=open($agentF)" } else { 'Enter=open' }
+    $modelF = switch ($agentF) { 'kimi' { 'Kimi' } 'codex' { 'Codex' } 'deepseek' { 'DeepSeek' } 'grok' { 'Grok' } default { '' } }
+    $layerB += [pscustomobject]@{
+      Index = 0; Kind = 'project'; Layer = 'fav'
       Id = ''; Cwd = $fav; Project = $name
       Title = "[fav] $name  - Enter open / c to bind as task"
-      Model = ''; Agent = ''; Msgs = 0
-      Branch = ''; Effort = ''; Updated = (Get-Date)
+      Model = $modelF; Agent = ''; Msgs = 0
+      Branch = ''; Effort = ''; Updated = $null
       LastTurn = 'favorites.txt'; Excerpt = $fav
-      Badge = 'FAV'; Hint = 'Enter=open'
+      Badge = 'FAV'; Hint = $hintF
       SessionCwd = ''; IsWeak = $false
+      LaunchAgent = $agentF; ForceNew = $true
     }
-    $i++
   }
 
   # Layer C: unbound recent titled sessions (strong paths only unless -All)
   foreach ($s in $sessions) {
-    if ($i -gt $script:MaxRows) { break }
     if ($usedSessionIds.ContainsKey($s.Id)) { continue }
     if (-not (Test-KeepUnboundSession -S $s -ShowAll $script:ShowAll)) { continue }
     $cwdShow = if ($s.GitRoot -and (Test-StrongProjectPath -Cwd $s.GitRoot)) { $s.GitRoot } else { $s.Cwd }
@@ -729,23 +965,44 @@ function Build-Rows {
     if ($pathKey -and -not $isWeak) { $seenPath[$pathKey] = $true }
     $usedSessionIds[$s.Id] = $true
     $projName = if ($isWeak) { '(system)' } else { Resolve-ProjectName -Path $cwdShow -FallbackLeaf $s.Project }
-    $out += [pscustomobject]@{
-      Index = $i; Kind = 'session'; Layer = $(if ($isWeak) { 'system' } else { 'recent' })
+    $agentC = ([string]$s.Agent).ToLowerInvariant()
+    if (-not $agentC -or -not $peers[$agentC]) { $agentC = if ($peerIds.Count -gt 0) { $peerIds[0] } else { '' } }
+    $resumeC = ($s.Agent) -and (([string]$s.Agent).ToLowerInvariant() -eq $agentC)
+    $hintC = $(if ($isWeak) { 'weak cwd - c to bind real project' } elseif ($resumeC) { "Enter=resume($agentC)  (unbound; use c to bind)" } else { "Enter=new($agentC)  (unbound; session was $($s.Agent))" })
+    $layerC += [pscustomobject]@{
+      Index = 0; Kind = 'session'; Layer = $(if ($isWeak) { 'system' } else { 'recent' })
       Id = $s.Id; Cwd = $cwdShow; Project = $projName
       Title = $s.Title; Model = $s.Model; Agent = $s.Agent
       Msgs = $s.Msgs; ChatMsgs = $s.ChatMsgs; TotalMsgs = $s.TotalMsgs
       Branch = $s.Branch; Effort = $s.Effort
       Updated = $s.Updated; LastTurn = $s.LastTurn; Excerpt = $s.Excerpt
       Badge = $(if ($isWeak) { 'SYS' } else { 'RECENT' })
-      Hint = $(if ($isWeak) { 'weak cwd - c to bind real project' } else { 'Enter=resume  (unbound; use c to bind)' })
+      Hint = $hintC
       SessionDir = $s.SessionDir; SessionSummary = $s.SessionSummary
       RecentPrompts = $s.RecentPrompts; DiskBytes = $s.DiskBytes
       GitRoot = $s.GitRoot
       SessionCwd = $s.SessionCwd
       IsWeak = $isWeak
+      LaunchAgent = $agentC; ForceNew = (-not $resumeC)
     }
-    $i++
   }
+
+  # Recency-first ordering (Init = 回到最近任务): bound tasks by last activity desc,
+  # no-session tasks last (binding order kept); favs keep file order; recents are
+  # already Updated desc. Index is assigned after ordering, then capped.
+  $sortedA  = @($layerA | Where-Object { $null -ne $_.Updated } | Sort-Object Updated -Descending)
+  $sortedA += @($layerA | Where-Object { $null -eq $_.Updated })
+  $out = @($sortedA) + @($layerB) + @($layerC)
+
+  # D-010: default view caps at 9 rows so every task number is a single digit
+  # and two-digit combo input (<task><agent>, e.g. 13 = task 1 + agent 3) stays
+  # unambiguous; `a` (ShowAll) lifts the cap and disables combo.
+  $cap = if ($script:ShowAll) { $script:MaxRows } else { [Math]::Min(9, $script:MaxRows) }
+  if ($out.Count -gt $cap) { $out = @($out | Select-Object -First $cap) }
+  for ($ii = 0; $ii -lt $out.Count; $ii++) { $out[$ii].Index = $ii + 1 }
+
+  # Act* column removed (user call 2026-08-13: never read well) — no per-row
+  # metrics are computed at all; the list shows identity/path/model/title only.
 
   $script:Rows = $out
   if ($script:Rows.Count -eq 0) { $script:Selected = 0 }
@@ -754,26 +1011,33 @@ function Build-Rows {
 }
 
 # =============================================================================
-# Color standard
-#   DarkGray  = unimportant meta (act*, sid, secondary help)
-#   Gray      = normal body
-#   White     = primary content (project/path, input focus line)
-#   Green     = selection row OR success
+# Color standard (D-013)
+#   Yellow    = RESERVED — the ONLY input-affordance color: option index
+#               chips / key chips + input-prompt prefixes (wz> / agent N /
+#               explorer> / wizard Read-LinePrompt). Nothing else may use it.
+#   DarkGray  = unimportant meta + ALL box frames/titles
+#   Gray      = normal body / option labels
+#   White     = primary content (project/path, input status text)
+#   Green     = selection row OR success / (default) marker
 #   Red       = error / missing path only
-#   Yellow    = temporary note OR high-priority key chips in COMMAND
-# Zone border colors (different per section, not rainbow body text):
+#   Cyan      = informational hints
+#   Magenta   = decoration (splash cat) + AGENT zone frame
+#   DarkCyan  = secondary attention (DarkYellow family retired)
+# Zone border colors (frames/titles are never Yellow):
 #   HEADER   = DarkGray
 #   1 LIST   = Cyan
-#   2 SELECTED = Green
-#   3 COMMAND  = Yellow  (hottest — this is where you type)
+#   2 AGENT  = Magenta
+#   3 COMMAND = DarkGray (neutral — the Yellow chips inside are the signal)
+# Stage highlight (Init two-step): active step's number chips glow Yellow,
+# inactive step's chips dim to DarkGray.
 # =============================================================================
 
 function Get-UiWidth {
-  # Content band = 70% of the full pane/window width (NOT "narrow to 30%").
-  # Left-aligned; right ~30% stays empty for stretch adaptability.
+  # Content band = 86% of the full pane/window width (widened 2026-08-13 from
+  # 70% — user: 延长右边区间, the right ~30% was wasted while rows overflowed).
   try {
     $full = [Math]::Max(80, $Host.UI.RawUI.WindowSize.Width - 1)
-    return [Math]::Max(64, [Math]::Floor($full * 0.70))
+    return [Math]::Max(64, [Math]::Floor($full * 0.86))
   } catch {
     return 90
   }
@@ -800,6 +1064,70 @@ function Reset-Screen {
     $raw.CursorPosition = New-Object System.Management.Automation.Host.Coordinates 0, 0
   } catch { Clear-Host }
   $script:DrawnLines = 0
+  $script:LoadBarY = -1
+}
+
+function Show-LoadingScreen {
+  # Instant frame + lively walking-cat progress block; Build-Rows and the
+  # session readers feed Update-LoadingBar so loading is watched, not waited.
+  Reset-Screen
+  Write-BoxTop -Title 'WZ INIT' -Border ([ConsoleColor]::DarkGray)
+  Write-BoxLine -Text ((Get-Date -Format 'yyyy-MM-dd HH:mm') + '   loading tasks...') -Fg Cyan -Border ([ConsoleColor]::DarkGray)
+  Write-BoxBottom -Border ([ConsoleColor]::DarkGray)
+  Write-FullLine -Text ''
+  Write-BoxTop -Title '1 LIST' -Border ([ConsoleColor]::Cyan)
+  $script:LoadFrame = 0
+  $script:LoadLastDraw = $null
+  $script:LoadBarY = $script:DrawnLines
+  for ($i = 0; $i -lt 5; $i++) { Write-FullLine -Text '' }  # cat(3) + bar(1) + label(1)
+  Write-BoxLine -Text 'scanning grok / kimi / codex / deepseek sessions...' -Fg DarkGray -Border ([ConsoleColor]::Cyan)
+  Write-BoxBottom -Border ([ConsoleColor]::Cyan)
+  Update-LoadingBar -Current 0 -Total 1 -Label 'warming up'
+}
+
+function Update-LoadingBar {
+  # Walking-cat progress block (5 lines at absolute Y recorded by
+  # Show-LoadingScreen): a 3-line ASCII cat walks right as the bar fills.
+  # Time-throttled so per-file updates never add meaningful overhead.
+  param([int]$Current, [int]$Total, [string]$Label)
+  if ($script:LoadBarY -lt 0) { return }
+  # Redirected host: no cursor positioning — skip redraws instead of
+  # concatenating every frame into one giant line in the captured output.
+  try { if ([Console]::IsOutputRedirected) { return } } catch { }
+  $finished = ($Total -gt 0 -and $Current -ge $Total)
+  if (-not $finished -and $script:LoadLastDraw) {
+    if (((Get-Date) - $script:LoadLastDraw).TotalMilliseconds -lt 66) { return }
+  }
+  $script:LoadLastDraw = Get-Date
+  try {
+    $raw = $Host.UI.RawUI
+    $inner = Get-InnerWidth
+    $barW = [Math]::Min(40, [Math]::Max(16, $inner - 24))
+    $frac = if ($Total -gt 0) { [Math]::Min(1.0, $Current / $Total) } else { 0 }
+    $fill = [int]($barW * $frac)
+    $bar = ([string][char]0x2588) * $fill + ([string][char]0x2591) * ($barW - $fill)
+    $pose = $script:LoadFrame % 2
+    $script:LoadFrame++
+    $face = if ($pose -eq 0) { '( o.o )' } else { '( -.- )' }
+    $legs = if ($pose -eq 0) { ' > ^ <' } else { ' > ^ <~' }
+    $catX = 4 + [int](($barW - 8) * $frac)
+    $pad = ' ' * $catX
+    $pct = [int]($frac * 100)
+    $lines = @(
+      ($pad + ' /\_/\'),
+      ($pad + $face),
+      ($pad + $legs),
+      ('  [' + $bar + '] ' + $pct + '%  ' + $Current + '/' + $Total),
+      ('  ' + $Label)
+    )
+    $pos = $raw.CursorPosition
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+      $t = Pad-Display -Text $lines[$i] -Width $inner -NoTrim
+      $raw.CursorPosition = New-Object System.Management.Automation.Host.Coordinates 2, ($script:LoadBarY + $i)
+      [Console]::Write($t)
+    }
+    $raw.CursorPosition = $pos
+  } catch {}
 }
 
 function End-Screen {
@@ -874,56 +1202,67 @@ function Write-BoxKeyValue {
 # Multi-color key row: border + segments (keys HIGHLIGHT, labels gray)
 function Write-BoxKeyRow {
   param(
-    [ConsoleColor]$Border = [ConsoleColor]::Yellow,
+    [ConsoleColor]$Border = [ConsoleColor]::DarkGray,
     [object[]]$Parts
   )
   # Parts: array of @{ T='text'; C=[ConsoleColor] }
+  # Frame guarantee: parts are HARD-truncated (Limit-Display, no '~') so the
+  # right border can never be pushed past the box edge (爆格子 regression fix).
   $inner = Get-InnerWidth
-  $raw = $Host.UI.RawUI
-  try {
-    $x0 = 0
-    $y0 = $raw.CursorPosition.Y
-  } catch {}
-
-  Write-Host -NoNewline '  |' -ForegroundColor $Border
-  $used = 0
-  Write-Host -NoNewline ' ' -ForegroundColor Gray
+  $segs = @()
+  $segs += @{ T = '  |'; C = $Border }
+  $segs += @{ T = ' '; C = [ConsoleColor]::Gray }
   $used = 1
   foreach ($p in $Parts) {
     $t = [string]$p.T
     $c = $p.C
     if (-not $c) { $c = [ConsoleColor]::Gray }
-    Write-Host -NoNewline $t -ForegroundColor $c
-    $used += (Get-DisplayWidth $t)
+    $room = $inner - $used
+    if ($room -le 0) { break }
+    $tw = Get-DisplayWidth $t
+    if ($tw -gt $room) {
+      $t = Limit-Display -Text $t -MaxWidth $room
+      $tw = Get-DisplayWidth $t
+    }
+    $segs += @{ T = $t; C = $c }
+    $used += $tw
   }
   $pad = $inner - $used
-  if ($pad -gt 0) { Write-Host -NoNewline (' ' * $pad) -ForegroundColor DarkGray }
-  Write-Host '|' -ForegroundColor $Border
+  if ($pad -gt 0) { $segs += @{ T = (' ' * $pad); C = [ConsoleColor]::DarkGray } }
+  $segs += @{ T = '|'; C = $Border }
+  foreach ($s in $segs) {
+    if ($s.T -eq '|') { Write-Host $s.T -ForegroundColor $s.C }
+    else { Write-Host -NoNewline $s.T -ForegroundColor $s.C }
+  }
   $script:DrawnLines++
 }
 
-# Column layout for content band = 70% of full window width.
-# Guarantee: Title ~45%+, Project ~20%+ of the band; gaps wide (3–6 spaces).
+# Column layout for content band = 86% of full window width (see Get-UiWidth).
+# Guarantee: Title ~45%+ of the band; Project compact; gaps wide (3–6 spaces).
 function Update-ColLayout {
   $inner = Get-InnerWidth
   $U = [Math]::Max(60, $inner - 1)
 
   # --- Flexible primary fields (must stay readable) ---
-  $title = [Math]::Max(34, [Math]::Floor($U * 0.45))
-  $proj  = [Math]::Max(18, [Math]::Floor($U * 0.20))
+  $title = [Math]::Max(30, [Math]::Floor($U * 0.45) - 27)  # 27 = path col beyond old act col
+  $proj  = [Math]::Min(22, [Math]::Max(14, [Math]::Floor($U * 0.14)))  # narrower Project → room for Title (user 23:32)
 
   # --- Compact meta ---
-  $flagW = 2
-  $num = 3
+  # Number column = FULL chip prefix width after the left border: leading ' '
+  # (Write-BoxKeyRow) + 2-space indent + bracket chip. Default view chips are
+  # compact ('[1]'=3 → 6); ShowAll pads to 2 digits ('[12]'=4 → 7). Must match
+  # Show-Screen exactly or the right border drifts off the frame.
+  $flagW = 0
+  $num = if ($script:ShowAll) { 7 } else { 6 }
   $date = 11
   $badge = 5
   $model = 9
-  $act = 5
+  $path = 32  # project folder path; Pad-Display tail-truncates with '~' when over
   $branch = 0   # hide branch in list by default → more title room
-  # parts: flag num date badge proj model act title = 8 → 7 gaps
-  $gapsN = 7
+  # parts: chip date badge proj path model title = 7 → 6 gaps
+  $gapsN = 6
 
-  $meta = $num + $date + $badge + $model + $act + $branch
+  $meta = $num + $date + $badge + $model + $path + $branch
   $core = $flagW + $meta + $title + $proj
 
   # Gaps: use leftover; prefer 4–6 spaces when band is wide
@@ -936,15 +1275,17 @@ function Update-ColLayout {
       $model -= $cut
       $need -= $cut
     }
-    if ($need -gt 0 -and $date -gt 9) {
-      $cut = [Math]::Min($need, $date - 9)
+    if ($need -gt 0 -and $date -gt 10) {
+      # floor 10: keeps the '---- -- --' placeholder intact; real dates may
+      # still lose a minute digit in ultra-narrow hosts (frame stays intact)
+      $cut = [Math]::Min($need, $date - 10)
       $date -= $cut
       $need -= $cut
     }
     if ($need -gt 0) {
       $title = [Math]::Max(28, $title - $need)
     }
-    $meta = $num + $date + $badge + $model + $act + $branch
+    $meta = $num + $date + $badge + $model + $path + $branch
     $core = $flagW + $meta + $title + $proj
     $gapPool = $U - $core
   }
@@ -972,6 +1313,18 @@ function Update-ColLayout {
     if ($used2 -gt $U) {
       $gapW = 2
       $title = [Math]::Max(20, $U - $flagW - $meta - $proj - ($gapsN * $gapW))
+      # last resort for narrow hosts: shrink Path then Project, re-fit Title
+      $used3 = $flagW + $meta + $title + $proj + ($gapsN * $gapW)
+      if ($used3 -gt $U) {
+        $path = 24
+        $meta = $num + $date + $badge + $model + $path + $branch
+        $title = [Math]::Max(20, $U - $flagW - $meta - $proj - ($gapsN * $gapW))
+        $used3 = $flagW + $meta + $title + $proj + ($gapsN * $gapW)
+        if ($used3 -gt $U) {
+          $proj = 14
+          $title = [Math]::Max(16, $U - $flagW - $meta - $proj - ($gapsN * $gapW))
+        }
+      }
     }
   }
 
@@ -981,30 +1334,29 @@ function Update-ColLayout {
     Date   = $date
     Badge  = $badge
     Proj   = $proj
+    Path   = $path
     Model  = $model
-    Act    = $act
     Branch = $branch
     Title  = $title
   }
 }
 
 function Format-TableRow {
+  # D-009: returns columns from Date onward; the bracket chip is prepended by
+  # Show-Screen as its own colored segment (stage highlight).
   param(
-    [bool]$Selected, [string]$Num, [string]$Date, [string]$Badge,
-    [string]$Proj, [string]$Model, [string]$Act, [string]$Branch, [string]$Title
+    [string]$Date, [string]$Badge,
+    [string]$Proj, [string]$Path, [string]$Model, [string]$Branch, [string]$Title
   )
-  $flag = if ($Selected) { '> ' } else { '  ' }
   $br = if ($script:Col.Branch -le 0) { '' } else {
     Pad-Display -Text $(if ([string]::IsNullOrEmpty($Branch) -or $Branch -eq '-') { '' } else { $Branch }) -Width $script:Col.Branch
   }
   $parts = @(
-    $flag,
-    (Pad-Display -Text $Num -Width $script:Col.Num -Align Right),
     (Pad-Display -Text $Date -Width $script:Col.Date),
     (Pad-Display -Text $Badge -Width $script:Col.Badge),
     (Pad-Display -Text $Proj -Width $script:Col.Proj),
-    (Pad-Display -Text $(if ([string]::IsNullOrEmpty($Model)) { '' } else { $Model }) -Width $script:Col.Model),
-    (Pad-Display -Text $Act -Width $script:Col.Act -Align Right)
+    (Pad-Display -Text $Path -Width $script:Col.Path),
+    (Pad-Display -Text $(if ([string]::IsNullOrEmpty($Model)) { '' } else { $Model }) -Width $script:Col.Model)
   )
   if ($script:Col.Branch -gt 0) { $parts += $br }
   $parts += (Pad-Display -Text $Title -Width $script:Col.Title)
@@ -1012,15 +1364,13 @@ function Format-TableRow {
 }
 
 function Format-HeaderRow {
-  $flag = '  '
+  # D-009: header from Date onward; the "[#]" chip cell is prepended by Show-Screen.
   $parts = @(
-    $flag,
-    (Pad-Display -Text '#' -Width $script:Col.Num -Align Right),
     (Pad-Display -Text 'DateTime' -Width $script:Col.Date),
     (Pad-Display -Text 'Tag' -Width $script:Col.Badge),
     (Pad-Display -Text 'Project' -Width $script:Col.Proj),
-    (Pad-Display -Text 'Model' -Width $script:Col.Model),
-    (Pad-Display -Text 'Act*' -Width $script:Col.Act -Align Right)
+    (Pad-Display -Text 'Path' -Width $script:Col.Path),
+    (Pad-Display -Text 'Model' -Width $script:Col.Model)
   )
   if ($script:Col.Branch -gt 0) {
     $parts += (Pad-Display -Text 'Branch' -Width $script:Col.Branch)
@@ -1030,183 +1380,154 @@ function Format-HeaderRow {
 }
 
 function Show-Screen {
-  $rows = Build-Rows
+  # Static screen (D-009): draw ONLY when something changed. Line input via
+  # Read-Host needs zero repaint while typing.
+  if (-not $script:ScreenDirty -and -not $script:RowsDirty) { return }
+  if ($script:RowsDirty) {
+    Show-LoadingScreen
+    [void](Build-Rows)  # sets $script:Rows
+    $script:RowsDirty = $false
+  }
+  $script:ScreenDirty = $false
+  $rows = $script:Rows
   Reset-Screen
   Update-ColLayout
   $now = Get-Date -Format 'yyyy-MM-dd HH:mm'
-  $view = if ($script:ShowAll) { 'ALL non-noise' } else { 'bound + fav + titled-recent' }
+  $view = if ($script:ShowAll) { 'ALL non-noise (combo off)' } else { 'top 9 · <t><a> combo on · a = all' }
   $hint = $script:StatusHint
   $script:StatusHint = ''
 
-  # Zone borders
+  # D-013: bright Yellow is RESERVED for input affordances only — option
+  # index chips and input-prompt prefixes. Frames/titles NEVER Yellow.
+  # Zone borders: LIST=Cyan, AGENT=Magenta, COMMAND=DarkGray (neutral;
+  # lets the Yellow key chips inside pop as the sole input signal).
   $bHead = [ConsoleColor]::DarkGray
   $bList = [ConsoleColor]::Cyan
-  $bSel  = [ConsoleColor]::Green
-  $bCmd  = [ConsoleColor]::Yellow
+  $bCmd  = [ConsoleColor]::DarkGray
 
   # ----- HEADER -----
   Write-BoxTop -Title 'WZ INIT' -Border $bHead
   Write-BoxLine -Text ("$now   rows $($rows.Count)   $view") -Fg DarkGray -Border $bHead
   if ($hint) {
     Write-BoxRule -Border $bHead
-    Write-BoxLine -Text ("! $hint") -Fg Yellow -Border $bHead
+    Write-BoxLine -Text ("! $hint") -Fg Cyan -Border $bHead
   }
   Write-BoxBottom -Border $bHead
 
   # ----- 1 LIST (Cyan border) -----
-  Write-BoxTop -Title '1 LIST' -Border $bList
-  $hdr = Pad-Display -Text (Format-HeaderRow) -Width (Get-InnerWidth) -NoTrim
+  # D-009 stage highlight: active step's number chips glow Yellow, inactive dim
+  # to DarkGray. Chips are bracketed [n] in BOTH zones at the same indent (x=6);
+  # width budget lives in Update-ColLayout ($num = 1 space + 2 indent + chip).
+  $listActive = (-not $script:PendingRow)
+  $listTitle = if ($listActive) { '1 LIST  << step 1 · type task number' } else { '1 LIST' }
+  Write-BoxTop -Title $listTitle -Border $bList
+  $chipHdr = Pad-Display -Text '[#]' -Width ($script:Col.Num - 3)
+  $hdr = '   ' + $chipHdr + $script:ColGap + (Format-HeaderRow)
+  $hdr = Pad-Display -Text $hdr -Width (Get-InnerWidth) -NoTrim
   Write-FullLine -Text ('  |' + $hdr + '|') -Fg DarkGray
   Write-BoxRule -Border $bList
 
   if ($rows.Count -eq 0) {
     Write-BoxLine -Text '(empty)  press  c  in COMMAND to create first task' -Fg Gray -Border $bList
   } else {
-    $innerList = Get-InnerWidth
+    $chipC = if ($listActive) { [ConsoleColor]::Yellow } else { [ConsoleColor]::DarkGray }
+    $rowC  = if ($listActive) { [ConsoleColor]::Gray } else { [ConsoleColor]::DarkGray }
     for ($idx = 0; $idx -lt $rows.Count; $idx++) {
       $r = $rows[$idx]
-      $sel = ($idx -eq $script:Selected)
-      $act = if ($r.Msgs -gt 0) { [string]$r.Msgs } else { '' }
-      $line = Format-TableRow -Selected $sel -Num ([string]$r.Index) `
+      # Compact chip: '[1]' in the capped default view; '[12]' pad only in ShowAll
+      $chip = if ($script:ShowAll) { '[' + ([string]$r.Index).PadLeft(2) + ']' } else { '[' + [string]$r.Index + ']' }
+      $rest = Format-TableRow `
         -Date (Format-DateTime $r.Updated) -Badge $(if ($r.Badge) { $r.Badge } else { '' }) `
-        -Proj $r.Project -Model $(if ($r.Model) { $r.Model } else { '' }) `
-        -Act $act -Branch $(if ($r.Branch -and $r.Branch -ne '-') { $r.Branch } else { '' }) `
+        -Proj $r.Project -Path $(if ($r.Cwd) { $r.Cwd } else { '' }) `
+        -Model $(if ($r.Model) { $r.Model } else { '' }) `
+        -Branch $(if ($r.Branch -and $r.Branch -ne '-') { $r.Branch } else { '' }) `
         -Title $r.Title
-      # Pad to exact inner width (no extra leading space — row already has flag gutter)
-      $body = Pad-Display -Text $line -Width $innerList -NoTrim
-      $fg = if ($sel) { [ConsoleColor]::Green } else { [ConsoleColor]::Gray }
-      Write-FullLine -Text ('  |' + $body + '|') -Fg $fg
+      Write-BoxKeyRow -Border $bList -Parts @(
+        @{ T = ('  ' + $chip); C = $chipC },
+        @{ T = ($script:ColGap + $rest); C = $rowC }
+      )
     }
   }
   Write-BoxBottom -Border $bList
 
-  # Double vertical gap between major modules (2x previous zero-gap)
-  Write-FullLine -Text ''
   Write-FullLine -Text ''
 
-  # ----- 2 DETAIL (Green) - recall aid for the task -----
-  Write-BoxTop -Title '2 DETAIL - recall this task' -Border $bSel
-  if ($rows.Count -gt 0) {
-    $cur = $rows[$script:Selected]
-    $pathMissing = ($cur.Cwd -and -not (Test-Path -LiteralPath $cur.Cwd))
-
-    # --- identity (high contrast): PROJECT name ≠ session title ≠ session cwd leaf ---
-    Write-BoxKeyValue -Label 'PROJECT' -Value $cur.Project -ValueFg White
-    if ($pathMissing) {
-      Write-BoxKeyValue -Label 'PATH' -Value ("MISSING  $($cur.Cwd)") -ValueFg Red
-    } else {
-      Write-BoxKeyValue -Label 'PATH' -Value $cur.Cwd -ValueFg White
-    }
-    if ($cur.SessionCwd -and (Normalize-PathKey $cur.SessionCwd) -ne (Normalize-PathKey $cur.Cwd)) {
-      Write-BoxKeyValue -Label 'sess-cwd' -Value $cur.SessionCwd -ValueFg DarkYellow
-    }
-    if ($cur.IsWeak) {
-      Write-BoxKeyValue -Label 'GATE' -Value 'weak/system cwd — not a formal task (use c wizard)' -ValueFg Red
-    }
-    Write-BoxKeyValue -Label 'layer' -Value ("{0} | {1}" -f $cur.Layer, $cur.Badge) -ValueFg Gray
-    Write-BoxKeyValue -Label 'active' -Value (Format-RelativeTime $cur.Updated) -ValueFg White
-    Write-BoxKeyValue -Label 'when' -Value (Format-DateTime $cur.Updated) -ValueFg DarkGray
-
-    Write-BoxRule -Border $bSel
-
-    # --- conversation identity (title is NOT project name) ---
-    Write-BoxKeyValue -Label 'title' -Value $(if ($cur.Title) { $cur.Title } else { '(no title)' }) -ValueFg Cyan
-    if ($cur.SessionSummary -and $cur.SessionSummary -ne $cur.Title) {
-      Write-BoxWrapped -Label 'about' -Text $cur.SessionSummary -Fg Gray -MaxLines 2
-    }
-
-    # --- last AI turn (primary recall) ---
-    $turn = $cur.LastTurn
-    if ([string]::IsNullOrWhiteSpace($turn)) { $turn = $cur.Excerpt }
-    if (-not [string]::IsNullOrWhiteSpace($turn)) {
-      Write-BoxRule -Border $bSel
-      Write-BoxWrapped -Label 'LAST TURN' -Text $turn -Fg White -MaxLines 4
-    }
-
-    # --- recent user prompts ---
-    $prompts = @()
-    if ($cur.RecentPrompts) { $prompts = @($cur.RecentPrompts) }
-    if ($prompts.Count -eq 0 -and $cur.SessionDir) {
-      $prompts = @(Get-RecentPrompts -SessionId $cur.Id -SessionDir $cur.SessionDir -Count 3)
-    }
-    if ($prompts.Count -gt 0) {
-      Write-BoxRule -Border $bSel
-      Write-BoxLine -Text ' recent prompts (newest first)' -Fg DarkGray -Border $bSel
-      $n = 1
-      foreach ($p in $prompts) {
-        Write-BoxWrapped -Label ("  Q$n") -Text $p -Fg Gray -MaxLines 2
-        $n++
-      }
-    }
-
-    # --- project state (PPS) if present ---
-    $hint = Get-ProjectStateHint -ProjectPath $cur.Cwd
-    if ($hint -and ($hint.Next -or $hint.Objective -or $hint.Package)) {
-      Write-BoxRule -Border $bSel
-      if ($hint.Package) {
-        Write-BoxKeyValue -Label 'package' -Value $hint.Package -ValueFg Gray
-      }
-      if ($hint.Objective) {
-        Write-BoxWrapped -Label 'objective' -Text $hint.Objective -Fg White -MaxLines 3
-      }
-      if ($hint.Next) {
-        Write-BoxWrapped -Label 'NEXT' -Text $hint.Next -Fg Yellow -MaxLines 3
-      }
-    }
-
-    Write-BoxRule -Border $bSel
-
-    # --- meta strip ---
-    $meta = @(
-      $(if ($cur.Model) { $cur.Model } else { 'no-model' }),
-      $(if ($cur.Branch -and $cur.Branch -ne '-') { 'br:' + $cur.Branch } else { $null }),
-      $(if ($cur.Effort -and $cur.Effort -ne '-') { 'effort:' + $cur.Effort } else { $null }),
-      ('msgs:' + $cur.Msgs),
-      $(if ($cur.ChatMsgs) { 'chat:' + $cur.ChatMsgs } else { $null })
-    ) | Where-Object { $_ }
-    Write-BoxKeyValue -Label 'meta' -Value ($meta -join ' | ') -ValueFg DarkGray
-    if ($cur.Id) {
-      $sidShort = $cur.Id
-      if ($sidShort.Length -gt 36) { $sidShort = $sidShort.Substring(0, 34) + '..' }
-      Write-BoxKeyValue -Label 'sid' -Value $sidShort -ValueFg DarkGray
-    } else {
-      Write-BoxKeyValue -Label 'sid' -Value '(no session yet - Enter opens new)' -ValueFg DarkGray
-    }
-    Write-BoxKeyValue -Label 'action' -Value $(if ($cur.Hint) { $cur.Hint } else { 'Enter open' }) -ValueFg Green
+  # ----- 2 AGENT (always visible; step-2 input lands at the prompt below) -----
+  $bAgt = [ConsoleColor]::Magenta
+  $peerList = @(Get-InstalledAgentPeers)
+  $armRow = if ($script:PendingRow) { $script:PendingRow } else { $null }
+  $agentActive = [bool]$armRow
+  $agTitle = if ($armRow) { '2 AGENT  << step 2 · pick agent for ' + $armRow.Project } else { '2 AGENT' }
+  Write-BoxTop -Title $agTitle -Border $bAgt
+  if ($peerList.Count -eq 0) {
+    Write-BoxLine -Text '(no grok/kimi/codex CLI detected)' -Fg DarkGray -Border $bAgt
   } else {
-    Write-BoxLine -Text 'No selection. Press c in COMMAND to create a task.' -Fg Gray -Border $bSel
+    $aChipC = if ($agentActive) { [ConsoleColor]::Yellow } else { [ConsoleColor]::DarkGray }
+    $aNameC = if ($agentActive) { [ConsoleColor]::White } else { [ConsoleColor]::Gray }
+    $aModeC = if ($agentActive) { [ConsoleColor]::Gray } else { [ConsoleColor]::DarkGray }
+    $defAgent = if ($armRow) { [string]$armRow.LaunchAgent } else { '' }
+    for ($ai = 0; $ai -lt $peerList.Count; $ai++) {
+      $peer = $peerList[$ai]
+      $mode = 'new'
+      if (-not $script:PendingForceNew -and $armRow -and $armRow.Kind -eq 'session' -and $armRow.Id -and (([string]$armRow.Agent).ToLowerInvariant() -eq $peer.Id)) { $mode = 'resume' }
+      $tag = ''
+      if ($armRow -and $peer.Id -eq $defAgent) { $tag = '  (default)' }
+      Write-BoxKeyRow -Border $bAgt -Parts @(
+        @{ T = ('  [' + ($ai + 1) + ']'); C = $aChipC },
+        @{ T = (' ' + $peer.Label); C = $aNameC },
+        @{ T = ('  ' + $mode); C = $aModeC },
+        @{ T = $tag; C = [ConsoleColor]::Green }
+      )
+    }
   }
-  Write-BoxBottom -Border $bSel
+  Write-BoxRule -Border $bAgt
+  if ($armRow) {
+    Write-BoxLine -Text 'type: agent number + Enter = that agent · Enter alone = (default) · q = cancel' -Fg White -Border $bAgt
+  } else {
+    Write-BoxLine -Text 'idle — step 1 first: type a task number below; agents light up on demand' -Fg DarkGray -Border $bAgt
+  }
+  Write-BoxBottom -Border $bAgt
 
-  # Double vertical gap between DETAIL and COMMAND
-  Write-FullLine -Text ''
   Write-FullLine -Text ''
 
-  # ----- 3 COMMAND (Yellow border + loud key chips) -----
+  # ----- 3 COMMAND (DarkGray frame; Yellow key chips = sole input signal) -----
   Write-BoxTop -Title '3 COMMAND  << type keys here' -Border $bCmd
 
-  # Input focus line - White, tight under title
-  $inner = Get-InnerWidth
-  $field = ' >_  waiting for key...'
-  $field = Pad-Display -Text $field -Width $inner -NoTrim
-  Write-FullLine -Text ('  |' + $field + '|') -Fg $bCmd
+  # Input line - static hint; real typing happens at the Read-Host prompt below.
+  # D-013: ' >_' marker Yellow (input-affordance prefix, same family as
+  # wz> / explorer>), status text White; the frame itself stays DarkGray.
+  $comboOn = (-not $script:ShowAll) -and ($script:Rows.Count -le 9) -and ($script:Rows.Count -gt 0)
+  if ($script:PendingRow) {
+    $field = '  step 2 ACTIVE: agent number + Enter  (Enter = default, q = cancel)'
+  } elseif ($comboOn) {
+    $field = '  step 1 ACTIVE: task # · or one-shot <t><a> = task+agent launch'
+  } else {
+    $field = '  step 1 ACTIVE: task number + Enter  (n<num> = new session)'
+  }
+  Write-BoxKeyRow -Border $bCmd -Parts @(
+    @{ T = ' >_'; C = [ConsoleColor]::Yellow },
+    @{ T = $field; C = [ConsoleColor]::White }
+  )
 
   Write-BoxRule -Border $bCmd
 
   # PRIMARY keys — each key token Yellow/White, labels Gray
   Write-BoxKeyRow -Border $bCmd -Parts @(
-    @{ T = '[ Enter ]'; C = [ConsoleColor]::Yellow },
-    @{ T = ' open/resume selected'; C = [ConsoleColor]::Gray },
-    @{ T = '    '; C = [ConsoleColor]::DarkGray },
-    @{ T = '[ c ]'; C = [ConsoleColor]::Yellow },
-    @{ T = ' NEW TASK wizard'; C = [ConsoleColor]::White }
+    @{ T = '[ <num> ]'; C = [ConsoleColor]::Yellow },
+    @{ T = ' open task → pick agent in 2 AGENT'; C = [ConsoleColor]::Gray },
+    @{ T = '  '; C = [ConsoleColor]::DarkGray },
+    @{ T = '[ <t><a> ]'; C = [ConsoleColor]::Yellow },
+    @{ T = ' one-shot launch'; C = [ConsoleColor]::Gray }
   )
   Write-BoxKeyRow -Border $bCmd -Parts @(
-    @{ T = '[  n  ]'; C = [ConsoleColor]::Yellow },
-    @{ T = ' new session in project'; C = [ConsoleColor]::Gray },
-    @{ T = '    '; C = [ConsoleColor]::DarkGray },
-    @{ T = '[ j/k ]'; C = [ConsoleColor]::Yellow },
-    @{ T = ' move'; C = [ConsoleColor]::Gray }
+    @{ T = '[ n<num> ]'; C = [ConsoleColor]::Yellow },
+    @{ T = ' new session → pick agent'; C = [ConsoleColor]::Gray },
+    @{ T = '  '; C = [ConsoleColor]::DarkGray },
+    @{ T = '[ c ]'; C = [ConsoleColor]::Yellow },
+    @{ T = ' NEW TASK wizard'; C = [ConsoleColor]::White },
+    @{ T = '  '; C = [ConsoleColor]::DarkGray },
+    @{ T = '[ s ]'; C = [ConsoleColor]::Yellow },
+    @{ T = ' shell'; C = [ConsoleColor]::Gray }
   )
   Write-BoxRule -Border $bCmd
   # Secondary — quieter, but keys still Yellow
@@ -1215,12 +1536,8 @@ function Show-Screen {
     @{ T = ' looser  '; C = [ConsoleColor]::DarkGray },
     @{ T = '[r]'; C = [ConsoleColor]::Yellow },
     @{ T = ' refresh  '; C = [ConsoleColor]::DarkGray },
-    @{ T = '[i]'; C = [ConsoleColor]::Yellow },
-    @{ T = ' detail  '; C = [ConsoleColor]::DarkGray },
     @{ T = '[d]'; C = [ConsoleColor]::Yellow },
-    @{ T = ' dash  '; C = [ConsoleColor]::DarkGray },
-    @{ T = '[0-9]'; C = [ConsoleColor]::Yellow },
-    @{ T = ' jump  '; C = [ConsoleColor]::DarkGray },
+    @{ T = ' dash(grok)  '; C = [ConsoleColor]::DarkGray },
     @{ T = '[q]'; C = [ConsoleColor]::Yellow },
     @{ T = ' quit'; C = [ConsoleColor]::DarkGray }
   )
@@ -1235,13 +1552,8 @@ function Get-RowByIndex {
   return $null
 }
 
-function Get-SelectedRow {
-  if ($script:Rows.Count -eq 0) { return $null }
-  return $script:Rows[$script:Selected]
-}
-
 function Resolve-LaunchCwd {
-  # R1: never hand Grok a weak path as session identity
+  # R1: never hand an agent CLI a weak path as session identity
   param($Row)
   if (-not $Row) { return $null }
   $path = $Row.Cwd
@@ -1256,6 +1568,106 @@ function Resolve-LaunchCwd {
     }
   }
   return $null
+}
+
+function Set-SpawnedTabTitle {
+  # D-011: NEVER call `set-tab-title` without a verified pane id — the no-id
+  # form targets the CLI's CURRENT tab, which renamed the Init tab to
+  # "WZ_Skill | Kimi" on every launch (user report 2026-08-13 晚). Hardened
+  # 2026-08-14 after pollution recurred: spawn stdout must be EXACTLY the new
+  # pane id (digits only, whole output) — any extra content aborts the rename;
+  # self-target guard can never rename our own (Init) pane's tab; every call
+  # is appended to tabtitle-debug.log so the next repro shows the raw truth.
+  param([string]$SpawnOut, [int]$ExitCode, [string]$TabTitle)
+  $paneId = $null
+  if ($ExitCode -eq 0 -and $SpawnOut) {
+    $m = [regex]::Match($SpawnOut.Trim(), '^(\d+)$')
+    if ($m.Success) { $paneId = $m.Groups[1].Value }
+  }
+  $self = $env:WEZTERM_PANE
+  $action = 'rename'
+  if ($ExitCode -ne 0) { $action = 'skip-exit' }
+  elseif (-not $paneId) { $action = 'skip-parse' }
+  elseif ($self -and $paneId -eq $self) { $action = 'skip-self'; $paneId = $null }
+  try {
+    $log = Join-Path $PSScriptRoot 'tabtitle-debug.log'
+    $raw = if ($null -eq $SpawnOut) { '<null>' } else { ($SpawnOut -replace '\r', '<CR>' -replace '\n', '<LF>') }
+    $line = '{0:yyyy-MM-dd HH:mm:ss} exit={1} self={2} pane={3} action={4} title="{5}" raw="{6}"' -f `
+      (Get-Date), $ExitCode, $(if ($self) { $self } else { '?' }), $(if ($paneId) { $paneId } else { '-' }), $action, $TabTitle, $raw
+    if ((Test-Path -LiteralPath $log) -and ((Get-Item -LiteralPath $log).Length -gt 65536)) {
+      Set-Content -LiteralPath $log -Value '# tabtitle debug (rotated)' -Encoding UTF8
+    }
+    Add-Content -LiteralPath $log -Value $line -Encoding UTF8
+  } catch {}
+  if (-not $paneId) { return }  # status.lua computes a label anyway; never touch current tab
+  try { & $script:Wez @('cli', 'set-tab-title', '--pane-id', "$paneId", $TabTitle) 2>$null | Out-Null } catch {}
+}
+
+function Get-AgentSplashScript {
+  # D-012-era launch UX: Init closes right after a successful spawn, and the
+  # agent CLI then boots for seconds over a BLACK void. 2026-08-14 user: give
+  # EVERY agent the Init walking cat (那只 loading 猫猫读条), not a static card.
+  # Animated 5-frame splash (~300ms fixed window) painted by the wrapper BEFORE
+  # the agent starts; the agent's own first paint then overwrites it. No
+  # readiness polling, no boot dependency. Single Yellow accent (色系唯一).
+  # Redirected hosts (smoke tests) get one static frame — no cursor math there.
+  # Template is a SINGLE-quoted here-string: only __AGENT__/__PROJ__ tokens are
+  # substituted, so inner $__vars reach the spawned wrapper verbatim.
+  param([string]$AgentLabel, [string]$Project)
+  $al = $AgentLabel.Replace("'", "''")
+  $pj = $Project.Replace("'", "''")
+  $tpl = @'
+try { [Console]::Clear() } catch {}
+$__al = '__AGENT__'
+$__pj = '__PROJ__'
+$__w = 80
+try { $__w = [Console]::WindowWidth } catch {}
+$__bw = [Math]::Min(44, [Math]::Max(16, $__w - 26))
+$__redir = $false
+try { $__redir = [Console]::IsOutputRedirected } catch {}
+$__frames = 5
+if ($__redir) { $__frames = 1 }
+$__y = 0
+for ($__f = 0; $__f -lt $__frames; $__f++) {
+  $frac = 1.0
+  if ($__frames -gt 1) { $frac = $__f / ($__frames - 1) }
+  $fill = [int]($__bw * $frac)
+  $bar = ([string][char]0x2588) * $fill + ([string][char]0x2591) * ($__bw - $fill)
+  $face = '( -.- )'
+  $legs = ' > ^ <~'
+  if ($__f % 2 -eq 0) { $face = '( o.o )'; $legs = ' > ^ <' }
+  $pad = ' ' * (2 + [int](($__bw - 8) * $frac))
+  try {
+    if (-not $__redir) {
+      if ($__f -eq 0) { $__y = [Console]::CursorTop } else { [Console]::SetCursorPosition(0, $__y) }
+    }
+    Write-Host ''
+    Write-Host ($pad + ' /\_/\') -ForegroundColor Magenta
+    Write-Host ($pad + $face) -ForegroundColor Magenta
+    Write-Host ($pad + $legs) -ForegroundColor Magenta
+    Write-Host ('  [' + $bar + '] ' + [int]($frac * 100) + '%') -ForegroundColor Magenta
+    Write-Host ('  ' + $__pj + ' · ' + $__al) -ForegroundColor Gray
+    Write-Host '  starting...' -ForegroundColor DarkGray
+  } catch {}
+  if ($__frames -gt 1 -and $__f -lt ($__frames - 1)) { Start-Sleep -Milliseconds 75 }
+}
+try { [Console]::Clear() } catch {}
+'@
+  return $tpl.Replace('__AGENT__', $al).Replace('__PROJ__', $pj)
+}
+
+function Get-AgentSplashSpawn {
+  # Spawn argv for: powershell -NoLogo -Command "<splash>; & '<exe>' <args...>".
+  # No -NoExit → when the agent exits, the pane closes (parity with direct
+  # spawn today). argv0 is real powershell.exe (no .cmd-shim freeze hazard).
+  param([string]$Exe, [string[]]$ExeArgs, [string]$AgentLabel, [string]$Project)
+  $exeLit = "'" + ([string]$Exe).Replace("'", "''") + "'"
+  $argStr = ''
+  if ($ExeArgs) {
+    $argStr = ' ' + (($ExeArgs | ForEach-Object { "'" + ([string]$_).Replace("'", "''") + "'" }) -join ' ')
+  }
+  $psCmd = (Get-AgentSplashScript -AgentLabel $AgentLabel -Project $Project) + "`r`n& $exeLit$argStr"
+  return @('powershell.exe', '-NoLogo', '-Command', $psCmd)
 }
 
 function Start-GrokTab {
@@ -1291,112 +1703,318 @@ function Start-GrokTab {
 
   $fullArgs = @(); if ($GrokArgs) { $fullArgs += $GrokArgs }
   if ($script:Wez -and (Test-WezAlive)) {
+    $proj = Split-Path -Leaf $Cwd
     $spawn = @('cli', 'spawn')
     $spawn += @('--cwd', $Cwd)
     $spawn += '--'
-    $spawn += @($script:Grok) + $fullArgs
+    $spawn += Get-AgentSplashSpawn -Exe $script:Grok -ExeArgs $fullArgs -AgentLabel 'Grok' -Project $proj
     try {
-      $spawnOut = & $script:Wez @spawn 2>&1 | Out-String
-      $proj = Split-Path -Leaf $Cwd
+      $spawnOut = & $script:Wez @spawn 2>$null | Out-String
+      # Tab role suffix is agent-specific (status.lua parses "Project | Role");
+      # each Start-*Tab sets its own — this one is Grok only
       $tabTitle = '{0} | Grok' -f $proj
-      $paneId = $null
-      if ($spawnOut -match '(\d+)') { $paneId = $Matches[1] }
-      try {
-        if ($paneId) {
-          & $script:Wez @('cli', 'set-tab-title', '--pane-id', "$paneId", $tabTitle) 2>$null | Out-Null
-        } else {
-          & $script:Wez @('cli', 'set-tab-title', $tabTitle) 2>$null | Out-Null
-        }
-      } catch {}
+      Set-SpawnedTabTitle -SpawnOut $spawnOut -ExitCode $LASTEXITCODE -TabTitle $tabTitle
       Write-Host ("  OK: {0}" -f $Title) -ForegroundColor Green
       Write-Host ("  --cwd {0}" -f $Cwd) -ForegroundColor DarkGray
-      Start-Sleep -Seconds 0.6
-      return
+      Start-Sleep -Milliseconds 200  # D-012: Init closes right after — settle only, no read time
+      return $true
     } catch {}
   }
   Set-Location -LiteralPath $Cwd
   & $script:Grok @fullArgs
 }
 
+function Start-KimiTab {
+  # F-011: kimi has no --cwd / --resume. Process cwd IS task identity
+  # (wezterm cli spawn --cwd <task path>), continue = `kimi --continue`.
+  param(
+    [string]$Cwd,
+    [string[]]$KimiArgs,
+    [string]$Title = 'kimi'
+  )
+  $exe = Find-AgentExe -Id 'kimi'
+  if (-not $exe) {
+    $script:StatusHint = 'kimi.exe not found — install Kimi Code CLI first'
+    return
+  }
+  # R1 hard gate (same as Grok)
+  if (-not (Test-StrongProjectPath -Cwd $Cwd)) {
+    $script:StatusHint = "GATE: refuse Kimi on weak path ($Cwd) — press c for new task"
+    return
+  }
+  if (-not (Test-Path -LiteralPath $Cwd)) {
+    $script:StatusHint = "Path missing: $Cwd"
+    return
+  }
+
+  $fullArgs = @(); if ($KimiArgs) { $fullArgs += $KimiArgs }
+  if ($script:Wez -and (Test-WezAlive)) {
+    $proj = Split-Path -Leaf $Cwd
+    $spawn = @('cli', 'spawn')
+    $spawn += @('--cwd', $Cwd)
+    $spawn += '--'
+    $spawn += Get-AgentSplashSpawn -Exe $exe -ExeArgs $fullArgs -AgentLabel 'Kimi' -Project $proj
+    try {
+      $spawnOut = & $script:Wez @spawn 2>$null | Out-String
+      $tabTitle = '{0} | Kimi' -f $proj
+      Set-SpawnedTabTitle -SpawnOut $spawnOut -ExitCode $LASTEXITCODE -TabTitle $tabTitle
+      Write-Host ("  OK: {0}" -f $Title) -ForegroundColor Green
+      Write-Host ("  cwd {0}" -f $Cwd) -ForegroundColor DarkGray
+      Start-Sleep -Milliseconds 200  # D-012: Init closes right after — settle only
+      return $true
+    } catch {}
+  }
+  Set-Location -LiteralPath $Cwd
+  & $exe @fullArgs
+}
+
+function Start-CodexTab {
+  # Codex parity: unlike kimi, codex HAS a work-root flag (-C/--cd <DIR>) and can
+  # resume any session by id: `codex resume <id>` / `codex resume --last`.
+  # Shim pitfall: WinGet resolves `codex` to codex.cmd, and .cmd MUST NOT be the
+  # argv0 of CreateProcess (freeze history — see Start-ProjectWithCli). A shim is
+  # therefore launched through a PowerShell host wrap, a real exe directly.
+  param(
+    [string]$Cwd,
+    [string[]]$CodexArgs,
+    [string]$Title = 'codex'
+  )
+  $exe = Find-AgentExe -Id 'codex'
+  if (-not $exe) {
+    $script:StatusHint = 'codex.exe not found — install Codex CLI first'
+    return
+  }
+  # R1 hard gate (same as Grok/Kimi)
+  if (-not (Test-StrongProjectPath -Cwd $Cwd)) {
+    $script:StatusHint = "GATE: refuse Codex on weak path ($Cwd) — press c for new task"
+    return
+  }
+  if (-not (Test-Path -LiteralPath $Cwd)) {
+    $script:StatusHint = "Path missing: $Cwd"
+    return
+  }
+
+  # Inject -C <cwd> (root-level flag, must precede subcommands like resume)
+  $hasC = $false
+  if ($CodexArgs) {
+    for ($ci = 0; $ci -lt $CodexArgs.Count; $ci++) {
+      if ($CodexArgs[$ci] -eq '-C' -or $CodexArgs[$ci] -eq '--cd') { $hasC = $true; break }
+      if ($CodexArgs[$ci] -like '--cd=*') { $hasC = $true; break }
+    }
+  }
+  $fullArgs = @()
+  if (-not $hasC) { $fullArgs += @('-C', $Cwd) }
+  if ($CodexArgs) { $fullArgs += $CodexArgs }
+
+  $isShim = $exe -match '\.(cmd|bat|ps1)$'
+  if ($script:Wez -and (Test-WezAlive)) {
+    $proj = Split-Path -Leaf $Cwd
+    $tabTitle = '{0} | Codex' -f $proj
+    if ($isShim) {
+      # Host wrap: keep shell open (-NoExit) so CLI errors stay visible
+      $argStr = ($fullArgs | ForEach-Object { "'" + ([string]$_).Replace("'", "''") + "'" }) -join ' '
+      $invoke = [System.IO.Path]::GetFileNameWithoutExtension($exe)
+      $psCmd = (Get-AgentSplashScript -AgentLabel 'Codex' -Project $proj) + "`r`n& $invoke $argStr"
+      $spawn = @('cli', 'spawn', '--cwd', $Cwd, '--', 'powershell.exe', '-NoLogo', '-NoExit', '-Command', $psCmd)
+    } else {
+      $spawn = @('cli', 'spawn', '--cwd', $Cwd, '--') + (Get-AgentSplashSpawn -Exe $exe -ExeArgs $fullArgs -AgentLabel 'Codex' -Project $proj)
+    }
+    try {
+      $spawnOut = & $script:Wez @spawn 2>$null | Out-String
+      Set-SpawnedTabTitle -SpawnOut $spawnOut -ExitCode $LASTEXITCODE -TabTitle $tabTitle
+      Write-Host ("  OK: {0}" -f $Title) -ForegroundColor Green
+      Write-Host ("  -C {0}" -f $Cwd) -ForegroundColor DarkGray
+      Start-Sleep -Milliseconds 200  # D-012: Init closes right after — settle only
+      return $true
+    } catch {}
+  }
+  Set-Location -LiteralPath $Cwd
+  if ($isShim) {
+    $invoke = [System.IO.Path]::GetFileNameWithoutExtension($exe)
+    & $invoke @fullArgs
+  } else {
+    & $exe @fullArgs
+  }
+}
+
+function Start-DeepSeekTab {
+  # F-014: DeepSeek CLI (@kavienw/deepseek-cli, npm shim deepseek.cmd).
+  # NO --cwd flag — process cwd IS project identity (kimi pattern);
+  # resume = `deepseek --continue` (per-cwd session at
+  # ~/.deepseek-cli/sessions/<sha256(cwd)[0:16]>.json; REPL also auto-restores,
+  # so ForceNew cannot guarantee a blank context — CLI's own product behavior).
+  # npm .cmd shim MUST NOT be argv0 of CreateProcess → PowerShell host wrap
+  # (codex shim pattern), walking-cat splash prepended.
+  param(
+    [string]$Cwd,
+    [string[]]$DeepseekArgs,
+    [string]$Title = 'deepseek'
+  )
+  $exe = Find-AgentExe -Id 'deepseek'
+  if (-not $exe) {
+    $script:StatusHint = 'deepseek.cmd not found — npm i -g @kavienw/deepseek-cli first'
+    return
+  }
+  # R1 hard gate (same as Grok/Kimi/Codex)
+  if (-not (Test-StrongProjectPath -Cwd $Cwd)) {
+    $script:StatusHint = "GATE: refuse DeepSeek on weak path ($Cwd) — press c for new task"
+    return
+  }
+  if (-not (Test-Path -LiteralPath $Cwd)) {
+    $script:StatusHint = "Path missing: $Cwd"
+    return
+  }
+
+  $fullArgs = @(); if ($DeepseekArgs) { $fullArgs += $DeepseekArgs }
+  if ($script:Wez -and (Test-WezAlive)) {
+    $proj = Split-Path -Leaf $Cwd
+    $argStr = ($fullArgs | ForEach-Object { "'" + ([string]$_).Replace("'", "''") + "'" }) -join ' '
+    $invoke = [System.IO.Path]::GetFileNameWithoutExtension($exe)
+    $psCmd = (Get-AgentSplashScript -AgentLabel 'DeepSeek' -Project $proj) + "`r`n& $invoke $argStr"
+    $spawn = @('cli', 'spawn', '--cwd', $Cwd, '--', 'powershell.exe', '-NoLogo', '-NoExit', '-Command', $psCmd)
+    try {
+      $spawnOut = & $script:Wez @spawn 2>$null | Out-String
+      $tabTitle = '{0} | DeepSeek' -f $proj
+      Set-SpawnedTabTitle -SpawnOut $spawnOut -ExitCode $LASTEXITCODE -TabTitle $tabTitle
+      Write-Host ("  OK: {0}" -f $Title) -ForegroundColor Green
+      Write-Host ("  cwd {0}" -f $Cwd) -ForegroundColor DarkGray
+      Start-Sleep -Milliseconds 200  # D-012: Init closes right after — settle only
+      return $true
+    } catch {}
+  }
+  Set-Location -LiteralPath $Cwd
+  $invoke = [System.IO.Path]::GetFileNameWithoutExtension($exe)
+  & $invoke @fullArgs
+}
+
+function Get-InstalledAgentPeers {
+  # D-005 peer set for chooser + session gating, stable order grok/kimi/codex/
+  # deepseek (F-014: DeepSeek CLI joined 2026-08-14 as the 4th peer).
+  # Self-contained (Find-AgentExe), cached per process — MUST NOT depend on the
+  # new-task wizard's CLI registry (WzCli*), which only exists after the wizard
+  # runs. (2026-08-13 bug: Read-AgentChoice read that registry, found it empty
+  # on the normal Init path, and silently fell back to 'grok' for every launch.)
+  if ($script:AgentPeers) { return $script:AgentPeers }
+  $defs = @(
+    @{ Id = 'grok';  Label = 'Grok Build CLI' },
+    @{ Id = 'kimi';  Label = 'Kimi Code CLI' },
+    @{ Id = 'codex'; Label = 'OpenAI Codex CLI' },
+    @{ Id = 'deepseek'; Label = 'DeepSeek CLI' }
+  )
+  $out = @()
+  foreach ($d in $defs) {
+    if (Find-AgentExe -Id $d.Id) { $out += [pscustomobject]@{ Id = $d.Id; Label = $d.Label } }
+  }
+  $script:AgentPeers = $out
+  return $out
+}
+
+function Invoke-AgentLaunch {
+  # Launches $Agent on the row's project path. Resume only when the row carries a
+  # session of that same agent; otherwise a fresh session starts on the path.
+  # Returns $true only when the agent tab was actually spawned (D-012: callers
+  # close the Init tab on success; cancel/gate/failure paths stay open).
+  param($Row, [string]$Agent, [string]$Launch, [switch]$ForceNew)
+  $resume = (-not $ForceNew) -and ($Row.Kind -eq 'session') -and $Row.Id -and (([string]$Row.Agent).ToLowerInvariant() -eq $Agent)
+  $verb = if ($ForceNew) { 'new' } elseif ($resume) { 'resume' } else { 'open' }
+  $title = '{0} {1}' -f $verb, $Row.Project
+  if ($Agent -eq 'kimi') {
+    if ($resume) { return (Start-KimiTab -Cwd $Launch -KimiArgs @('--continue') -Title $title) }
+    return (Start-KimiTab -Cwd $Launch -KimiArgs @() -Title $title)
+  }
+  if ($Agent -eq 'codex') {
+    if ($resume) { return (Start-CodexTab -Cwd $Launch -CodexArgs @('resume', $Row.Id) -Title $title) }
+    return (Start-CodexTab -Cwd $Launch -CodexArgs @() -Title $title)
+  }
+  if ($Agent -eq 'deepseek') {
+    # --continue resolves the per-cwd session itself; $Row.Id (hash) is
+    # display/matching identity only, never passed to the CLI.
+    if ($resume) { return (Start-DeepSeekTab -Cwd $Launch -DeepseekArgs @('--continue') -Title $title) }
+    return (Start-DeepSeekTab -Cwd $Launch -DeepseekArgs @() -Title $title)
+  }
+  if ($resume) { return (Start-GrokTab -Cwd $Launch -GrokArgs @('--cwd', $Launch, '--resume', $Row.Id) -Title $title) }
+  return (Start-GrokTab -Cwd $Launch -GrokArgs @('--cwd', $Launch) -Title $title)
+}
+
 function Invoke-RowPrimary {
+  # Step 1 of the two-step launch: gates + arm the AGENT zone (same screen).
   param($Row)
   if (-not $Row) {
     $script:StatusHint = 'No row selected - press c for new task wizard'
+    $script:ScreenDirty = $true
     return
   }
   if ($Row.IsWeak -or $Row.Layer -eq 'system') {
     $script:StatusHint = 'GATE: system/home session is not a formal task — press c to create/bind project'
+    $script:ScreenDirty = $true
     return
   }
   $launch = Resolve-LaunchCwd -Row $Row
   if (-not $launch) {
     $script:StatusHint = 'GATE: no strong project path — press c wizard'
+    $script:ScreenDirty = $true
     return
   }
-  if ($Row.Kind -eq 'session' -and $Row.Id) {
-    $a = @('--cwd', $launch, '--resume', $Row.Id)
-    Start-GrokTab -Cwd $launch -GrokArgs $a -Title ("resume {0}" -f $Row.Project)
-    return
-  }
-  Start-GrokTab -Cwd $launch -GrokArgs @('--cwd', $launch) -Title ("open {0}" -f $Row.Project)
+  $script:PendingRow = $Row
+  $script:PendingForceNew = $false
+  $script:PendingLaunch = $launch
+  $script:ScreenDirty = $true
 }
 
 function Invoke-RowNewSession {
+  # Step 1 (forced-new variant): gates + arm the AGENT zone.
   param($Row)
   if (-not $Row -or -not $Row.Cwd -or $Row.IsWeak -or $Row.Layer -eq 'system') {
     Invoke-NewTaskWizard
+    $script:ScreenDirty = $true
     return
   }
   $launch = Resolve-LaunchCwd -Row $Row
   if (-not $launch) {
     $script:StatusHint = 'Path missing/weak - use c wizard'
+    $script:ScreenDirty = $true
     return
   }
-  Start-GrokTab -Cwd $launch -GrokArgs @('--cwd', $launch) -Title ("new {0}" -f $Row.Project)
+  $script:PendingRow = $Row
+  $script:PendingForceNew = $true
+  $script:PendingLaunch = $launch
+  $script:ScreenDirty = $true
 }
 
-function Show-RowDetail {
-  param($Row)
-  if (-not $Row) { return }
-  try { $Host.UI.RawUI.CursorVisible = $true } catch {}
-  Clear-Host
-  Write-Host ''
-  Write-Host '  DETAIL' -ForegroundColor Cyan
-  Write-Host ("  PROJECT : {0}   (desk-roots name / .wz-project)" -f $Row.Project) -ForegroundColor White
-  Write-Host ("  PATH    : {0}" -f $Row.Cwd) -ForegroundColor Yellow
-  if ($Row.SessionCwd) {
-    Write-Host ("  sess-cwd: {0}" -f $Row.SessionCwd) -ForegroundColor DarkYellow
+function Complete-AgentPick {
+  # Step 2: launch the armed row with the picked agent (zone is on-screen already).
+  param([string]$Agent)
+  $row = $script:PendingRow
+  if (-not $row) { return }
+  $launch = $script:PendingLaunch
+  $force = $script:PendingForceNew
+  $script:PendingRow = $null
+  $script:PendingForceNew = $false
+  $script:PendingLaunch = $null
+  $ok = if ($force) { Invoke-AgentLaunch -Row $row -Agent $Agent -Launch $launch -ForceNew }
+        else { Invoke-AgentLaunch -Row $row -Agent $Agent -Launch $launch }
+  if ($ok) {
+    # D-012: launch succeeded → close this Init tab. The agent tab was spawned
+    # (and focused) moments ago; no long-lived Init tab remains to pollute or
+    # mislabel. Gate refusal / spawn failure / cancel all keep Init open.
+    # Close-CurrentWezPane kills our own pane and never returns on success;
+    # $false only when no wez CLI/pane id (non-wezterm host) → fall through
+    # to a normal re-render.
+    [void](Close-CurrentWezPane)
   }
-  Write-Host ("  layer   : {0} | {1}" -f $Row.Layer, $Row.Badge)
-  Write-Host ("  time    : {0}" -f (Format-DateTime $Row.Updated))
-  Write-Host ("  model   : {0}" -f $(if ($Row.Model) { $Row.Model } else { '(empty)' }))
-  Write-Host ("  act*    : {0} (not a filter)" -f $Row.Msgs)
-  Write-Host ("  sid     : {0}" -f $Row.Id)
-  Write-Host ("  title   : {0}   (Grok chat title — NOT project name)" -f $Row.Title)
-  Write-Host ("  summary : {0}" -f $Row.LastTurn) -ForegroundColor Gray
-  if ($Row.IsWeak) {
-    Write-Host '  GATE    : weak/system — refuse formal open; use c wizard' -ForegroundColor Red
-  }
-  Write-Host ''
-  Write-Host '  any key...' -ForegroundColor DarkGray
-  [void]$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+  $script:RowsDirty = $true
+  $script:ScreenDirty = $true
 }
 
-function Move-Selection {
-  param([int]$Delta)
-  if ($script:Rows.Count -eq 0) { return }
-  $script:Selected = $script:Selected + $Delta
-  if ($script:Selected -lt 0) { $script:Selected = $script:Rows.Count - 1 }
-  if ($script:Selected -ge $script:Rows.Count) { $script:Selected = 0 }
-}
 
 function Read-LinePrompt {
   param([string]$Label, [string]$Default = '')
   try { $Host.UI.RawUI.CursorVisible = $true } catch {}
+  # D-013: input-prompt prefix is always bright Yellow (global input affordance).
   if ($Default) {
-    Write-Host -NoNewline ("  {0} [{1}]: " -f $Label, $Default) -ForegroundColor Cyan
+    Write-Host -NoNewline ("  {0} [{1}]: " -f $Label, $Default) -ForegroundColor Yellow
   } else {
-    Write-Host -NoNewline ("  {0}: " -f $Label) -ForegroundColor Cyan
+    Write-Host -NoNewline ("  {0}: " -f $Label) -ForegroundColor Yellow
   }
   $v = Read-Host
   if ([string]::IsNullOrWhiteSpace($v)) { return $Default }
@@ -1404,7 +2022,10 @@ function Read-LinePrompt {
 }
 
 function Close-CurrentWezPane {
-  # Close the pane running this script (F3 WizardOnly tab).
+  # Close the pane running this script (F3 WizardOnly tab; D-012 Init
+  # close-on-launch). Kills our own pane — on success the pane dies before
+  # control returns. Returns $false WITHOUT exiting when no wez CLI / pane id
+  # is available (non-wezterm host, pipe smoke) so callers can degrade.
   $paneId = $env:WEZTERM_PANE
   $wez = $script:Wez
   if (-not $wez) {
@@ -1417,8 +2038,9 @@ function Close-CurrentWezPane {
     try {
       & $wez @('cli', 'kill-pane', '--pane-id', "$paneId") 2>$null | Out-Null
     } catch {}
+    exit 0
   }
-  exit 0
+  return $false
 }
 
 function Stop-Wizard {
@@ -1484,9 +2106,17 @@ function Write-UiSection {
 }
 
 function Write-UiChoice {
-  # Actionable option line — NEVER DarkGray
-  param([string]$Text, [ConsoleColor]$Fg = [ConsoleColor]::Yellow)
-  Write-Host ("  {0}" -f $Text) -ForegroundColor $Fg
+  # Actionable option line — NEVER DarkGray.
+  # D-013: 亮黄是唯一输入可供性色——选项索引芯片恒为亮黄，标签恒为 Gray，
+  # 调用方不再决定芯片颜色（-Fg 仅对无芯片的纯文本行生效）。
+  param([string]$Text, [ConsoleColor]$Fg = [ConsoleColor]::White)
+  if ($Text -match '^(\s*\[[^\]]*\])(.*)$') {
+    Write-Host '  ' -NoNewline
+    Write-Host $Matches[1] -NoNewline -ForegroundColor Yellow
+    Write-Host $Matches[2] -ForegroundColor Gray
+  } else {
+    Write-Host ("  {0}" -f $Text) -ForegroundColor $Fg
+  }
 }
 
 function Write-UiStatic {
@@ -1554,6 +2184,7 @@ function Build-LocationOptions {
     }
   } catch {}
 
+  # Historical "GrokProject*" parent dirs kept for existing installs (now multi-agent)
   foreach ($c in @('G:\GrokProject', 'D:\GrokProject', 'E:\GrokProject', 'C:\GrokProject')) {
     try {
       if (Test-Path -LiteralPath $c) { Add-P $c 'DISK' }
@@ -1617,7 +2248,9 @@ function Build-InstalledAiCliOptions {
 
   $cmdMap = @(
     @{ Id = 'grok'; Label = 'Grok Build CLI'; Names = @('grok'); Kind = 'grok' },
+    @{ Id = 'kimi'; Label = 'Kimi Code CLI'; Names = @('kimi'); Kind = 'kimi' },
     @{ Id = 'codex'; Label = 'OpenAI Codex CLI'; Names = @('codex'); Kind = 'codex' },
+    @{ Id = 'deepseek'; Label = 'DeepSeek CLI'; Names = @('deepseek'); Kind = 'deepseek' },
     @{ Id = 'claude'; Label = 'Claude Code CLI'; Names = @('claude'); Kind = 'claude' },
     @{ Id = 'gemini'; Label = 'Gemini CLI'; Names = @('gemini'); Kind = 'gemini' },
     @{ Id = 'aider'; Label = 'Aider'; Names = @('aider'); Kind = 'aider' },
@@ -1649,6 +2282,17 @@ function Build-InstalledAiCliOptions {
     }
   }
 
+  # Kimi fallback paths when PATH resolution fails (D-004)
+  foreach ($kp in @(
+      (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi.exe'),
+      (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi.cmd'),
+      (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi')
+    )) {
+    if ($kp -and (Test-Path -LiteralPath $kp)) {
+      Add-Cli -Id 'kimi' -Label 'Kimi Code CLI' -Exe $kp -Kind 'kimi'
+    }
+  }
+
   # Always offer shell (do not require Test-Path on bare name)
   $psExe = 'powershell.exe'
   try {
@@ -1670,6 +2314,70 @@ function Build-InstalledAiCliOptions {
 function Get-CliCount {
   if (-not $script:WzCliN) { return 0 }
   return [int]$script:WzCliN.Count
+}
+
+function Find-AgentExe {
+  # D-004 registry lookup: grok / kimi / codex → exe path or $null
+  param([string]$Id)
+  $names = switch ($Id) {
+    'grok' { @('grok') }
+    'kimi' { @('kimi') }
+    'codex' { @('codex') }
+    'deepseek' { @('deepseek') }
+    default { @() }
+  }
+  foreach ($nm in $names) {
+    try {
+      $cmd = Get-Command $nm -ErrorAction SilentlyContinue
+      if ($cmd -and $cmd.Source -and (Test-Path -LiteralPath $cmd.Source)) { return [string]$cmd.Source }
+    } catch {}
+  }
+  if ($Id -eq 'kimi') {
+    foreach ($c in @(
+        (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi.exe'),
+        (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi.cmd'),
+        (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi')
+      )) {
+      if ($c -and (Test-Path -LiteralPath $c)) { return $c }
+    }
+  }
+  if ($Id -eq 'codex') {
+    # WinGet/npm install locations when PATH resolution fails. NOTE: Get-Command
+    # may resolve `codex` to a .cmd shim — callers (Start-CodexTab) host-wrap shims
+    foreach ($c in @(
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\codex.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\codex\codex.exe'),
+        (Join-Path $env:USERPROFILE '.codex\bin\codex.exe')
+      )) {
+      if ($c -and (Test-Path -LiteralPath $c)) { return $c }
+    }
+    # Real layout on this machine: WinGet Packages\OpenAI.Codex_*\codex.cmd
+    # (on user PATH live, but PATH is stripped in some degraded shells)
+    try {
+      $hit = Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Directory -Filter 'OpenAI.Codex_*' -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($hit) {
+        foreach ($leaf in @('codex.cmd', 'codex-x86_64-pc-windows-msvc.exe')) {
+          $cc = Join-Path $hit.FullName $leaf
+          if (Test-Path -LiteralPath $cc) { return $cc }
+        }
+      }
+    } catch {}
+  }
+  if ($Id -eq 'deepseek') {
+    # npm global install (@kavienw/deepseek-cli) lands deepseek.cmd under
+    # %APPDATA%\npm — on the USER PATH for every normally spawned shell.
+    foreach ($c in @(
+        (Join-Path $env:APPDATA 'npm\deepseek.cmd'),
+        (Join-Path $env:APPDATA 'npm\deepseek.exe'),
+        (Join-Path $env:APPDATA 'npm\deepseek')
+      )) {
+      if ($c -and (Test-Path -LiteralPath $c)) { return $c }
+    }
+  }
+  if ($Id -eq 'grok' -and $script:Grok -and (Test-Path -LiteralPath $script:Grok)) {
+    return [string]$script:Grok
+  }
+  return $null
 }
 
 function Initialize-NewProjectSkeleton {
@@ -1711,7 +2419,7 @@ function Start-ProjectWithCli {
 
   if (-not (Test-Path -LiteralPath $Cwd)) {
     Write-Host ("  FAIL: project folder missing: {0}" -f $Cwd) -ForegroundColor Red
-    Write-Host '  Create/bind may have failed earlier.' -ForegroundColor Yellow
+    Write-Host '  Create/bind may have failed earlier.' -ForegroundColor Cyan
     return
   }
 
@@ -1737,7 +2445,9 @@ function Start-ProjectWithCli {
   # name on PATH. Direct spawn of codex.cmd caused freezes / wrong host.
   # ------------------------------------------------------------------
   $invoke = switch ($Kind) {
+    'kimi' { 'kimi' }
     'codex' { 'codex' }
+    'deepseek' { 'deepseek' }
     'claude' { 'claude' }
     'gemini' { 'gemini' }
     'aider' { 'aider' }
@@ -1755,7 +2465,9 @@ function Start-ProjectWithCli {
   $nameEsc = $Name.Replace("'", "''")
   # Role for tab bar (status.lua reads title for "Project | Codex")
   $role = switch ($Kind) {
+    'kimi' { 'Kimi' }
     'codex' { 'Codex' }
+    'deepseek' { 'DeepSeek' }
     'claude' { 'Claude' }
     'gemini' { 'Gemini' }
     'aider' { 'Aider' }
@@ -1765,7 +2477,8 @@ function Start-ProjectWithCli {
   }
   $roleEsc = $role.Replace("'", "''")
   # Keep shell open if CLI exits/crashes so user sees the error instead of a dead tab
-  $psCommand = @"
+  # Walking-cat splash first (same wrapper animation as Start-*Tab), then WZ launch lines.
+  $psCommand = (Get-AgentSplashScript -AgentLabel $role -Project $Name) + "`r`n" + @"
 `$ErrorActionPreference = 'Continue'
 try { `$Host.UI.RawUI.WindowTitle = '$nameEsc | $roleEsc' } catch {}
 Set-Location -LiteralPath '$cwdEsc'
@@ -1794,18 +2507,10 @@ Write-Host '  CLI ended. Window kept open - close tab when done.' -ForegroundCol
         '-NoExit',
         '-ExecutionPolicy', 'Bypass',
         '-Command', $psCommand
-      ) 2>&1 | Out-String
+      ) 2>$null | Out-String
       # Prefer explicit tab title so bar never falls back to literal "Tab"
       $tabTitle = '{0} | {1}' -f $Name, $role
-      $paneId = $null
-      if ($spawnOut -match '(\d+)') { $paneId = $Matches[1] }
-      try {
-        if ($paneId) {
-          & $script:Wez @('cli', 'set-tab-title', '--pane-id', "$paneId", $tabTitle) 2>$null | Out-Null
-        } else {
-          & $script:Wez @('cli', 'set-tab-title', $tabTitle) 2>$null | Out-Null
-        }
-      } catch {}
+      Set-SpawnedTabTitle -SpawnOut $spawnOut -ExitCode $LASTEXITCODE -TabTitle $tabTitle
       Write-Host ("  OK: started {0} via PowerShell host" -f $Label) -ForegroundColor Green
       Write-Host ("  cwd {0}" -f $Cwd) -ForegroundColor DarkGray
       Write-Host ("  cmd {0}" -f $invoke) -ForegroundColor DarkGray
@@ -1814,9 +2519,9 @@ Write-Host '  CLI ended. Window kept open - close tab when done.' -ForegroundCol
       Write-Host ("  FAIL spawn: {0}" -f $_.Exception.Message) -ForegroundColor Red
     }
   } else {
-    Write-Host '  Start manually in this folder:' -ForegroundColor Yellow
-    Write-Host ("    cd /d {0}" -f $Cwd) -ForegroundColor Yellow
-    Write-Host ("    {0}" -f $invoke) -ForegroundColor Yellow
+    Write-Host '  Start manually in this folder:' -ForegroundColor Cyan
+    Write-Host ("    cd /d {0}" -f $Cwd) -ForegroundColor White
+    Write-Host ("    {0}" -f $invoke) -ForegroundColor White
   }
   $script:StatusHint = "$Id @ $Name"
 }
@@ -1842,7 +2547,8 @@ function Write-WzProjectMarkerEx {
 }
 
 function Invoke-NewTaskWizard {
-  # 4 steps / 4 prompts. UI iron rules: R-UI-1 spacing, R-UI-2 gray=static only.
+  # 5 steps / 5 prompts (D-004 added default-agent step).
+  # UI iron rules: R-UI-1 spacing, R-UI-2 gray=static only.
   try { $Host.UI.RawUI.CursorVisible = $true } catch {}
   if (-not $script:Grok) {
     try { $script:Grok = Resolve-GrokExe } catch {}
@@ -1852,13 +2558,14 @@ function Invoke-NewTaskWizard {
   $name = ''
   $fullPath = ''
   $cliIdx = -1
+  $agentChoice = 'grok'
 
-  while ($step -ge 1 -and $step -le 4) {
+  while ($step -ge 1 -and $step -le 5) {
     try {
       # ========== STEP 1: NAME ==========
       if ($step -eq 1) {
-        Show-WizardHeader -Title 'Step 1 / 4   Project name' -Hint 'Binding name = default folder name'
-        Write-UiSection 'RULES (static 鈥?not choices)'
+        Show-WizardHeader -Title 'Step 1 / 5   Project name' -Hint 'Binding name = default folder name'
+        Write-UiSection 'RULES (static - not choices)'
         Write-UiBlank 1
         Write-UiStatic 'Allowed : A-Z a-z 0-9 . _ -     e.g. WZ_Skill  my-game'
         Write-UiStatic 'Forbidden: home Desktop Documents Downloads Administrator'
@@ -1891,7 +2598,7 @@ function Invoke-NewTaskWizard {
       if ($step -eq 2) {
         Build-LocationOptions -ProjectName $name
         $cnt = Get-LocationCount
-        Show-WizardHeader -Title 'Step 2 / 4   Create location' -Hint 'Pick one path. Final = parent\name'
+        Show-WizardHeader -Title 'Step 2 / 5   Create location' -Hint 'Pick one path. Final = parent\name'
 
         Write-UiSection 'PROJECT'
         Write-UiBlank 1
@@ -1903,7 +2610,7 @@ function Invoke-NewTaskWizard {
         Write-UiSection 'LOCATIONS  (enter a number)'
         Write-UiBlank 1
         if ($cnt -lt 1) {
-          Write-Host '  (no auto options 鈥?use 0 or 9)' -ForegroundColor DarkYellow
+          Write-Host '  (no auto options - use 0 or 9)' -ForegroundColor DarkCyan
         } else {
           for ($i = 0; $i -lt $cnt; $i++) {
             $nn = [int]$script:WzLocN[$i]
@@ -1915,7 +2622,7 @@ function Invoke-NewTaskWizard {
             } else {
               Write-UiChoice ('[{0}]' -f $nn) -Fg White
             }
-            Write-Host ('       {0}' -f $full) -ForegroundColor Yellow
+            Write-Host ('       {0}' -f $full) -ForegroundColor White
           }
         }
 
@@ -1944,7 +2651,7 @@ function Invoke-NewTaskWizard {
           Write-UiBlank 1
           Write-UiSoftRule
           Write-UiBlank 1
-          Write-Host ("  Will create:  <parent>\{0}" -f $name) -ForegroundColor Yellow
+          Write-Host ("  Will create:  <parent>\{0}" -f $name) -ForegroundColor White
           Write-UiBlank 1
           Write-UiStatic ('Example parent: {0}' -f (Get-DefaultProjectsParent))
           Write-UiBlank 1
@@ -2016,13 +2723,13 @@ function Invoke-NewTaskWizard {
       if ($step -eq 3) {
         Build-InstalledAiCliOptions
         $cc = Get-CliCount
-        Show-WizardHeader -Title 'Step 3 / 4   AI CLI on this PC' -Hint 'Scanned PATH + common install paths'
+        Show-WizardHeader -Title 'Step 3 / 5   AI CLI on this PC' -Hint 'Scanned PATH + common install paths'
 
         Write-UiSection 'PROJECT'
         Write-UiBlank 1
         Write-Host ("  NAME     {0}" -f $name) -ForegroundColor Green
         Write-UiBlank 1
-        Write-Host ("  PATH     {0}" -f $fullPath) -ForegroundColor Yellow
+        Write-Host ("  PATH     {0}" -f $fullPath) -ForegroundColor White
         Write-UiBlank 2
 
         Write-UiSoftRule
@@ -2081,21 +2788,98 @@ function Invoke-NewTaskWizard {
         continue
       }
 
-      # ========== STEP 4: CONFIRM ==========
+      # ========== STEP 4: DEFAULT AGENT (D-004) ==========
       if ($step -eq 4) {
+        if ($cliIdx -lt 0) { $step = 3; continue }
+        $cliId = [string]$script:WzCliId[$cliIdx]
+        # Default follows the chosen CLI when it is in the D-004 registry
+        $agentDef = 'grok'
+        if ($cliId -eq 'grok' -or $cliId -eq 'kimi' -or $cliId -eq 'codex' -or $cliId -eq 'deepseek') { $agentDef = $cliId }
+
+        # Registry list: grok always; kimi/codex/deepseek only when actually installed
+        $agList = @('grok')
+        if (Find-AgentExe -Id 'kimi') { $agList += 'kimi' }
+        if (Find-AgentExe -Id 'codex') { $agList += 'codex' }
+        if (Find-AgentExe -Id 'deepseek') { $agList += 'deepseek' }
+        $agDefNum = 1
+        for ($i = 0; $i -lt $agList.Count; $i++) {
+          if ($agList[$i] -eq $agentDef) { $agDefNum = $i + 1; break }
+        }
+
+        Show-WizardHeader -Title 'Step 4 / 5   Default agent' -Hint 'Written to desk-roots 3rd column; Enter accepts default'
+
+        Write-UiSection 'PROJECT'
+        Write-UiBlank 1
+        Write-Host ("  NAME     {0}" -f $name) -ForegroundColor Green
+        Write-UiBlank 1
+        Write-Host ("  PATH     {0}" -f $fullPath) -ForegroundColor White
+        Write-UiBlank 2
+
+        Write-UiSoftRule
+        Write-UiBlank 1
+        Write-UiSection 'AGENT  (enter number; Enter = default)'
+        Write-UiBlank 1
+        for ($i = 0; $i -lt $agList.Count; $i++) {
+          $tag = ''
+          if ($agList[$i] -eq $agentDef) { $tag = '   (default)' }
+          Write-UiBlank 1
+          Write-UiChoice ('[{0}]  {1}{2}' -f ($i + 1), $agList[$i], $tag) -Fg White
+        }
+        Write-UiBlank 1
+        Write-UiStatic 'grok = --cwd flag; codex = -C/--cd flag; kimi/deepseek = process cwd (no cwd flag)'
+        Write-UiBlank 2
+
+        Write-UiSoftRule
+        Write-UiBlank 1
+        Write-UiSection 'OTHER ACTIONS'
+        Write-UiBlank 1
+        Write-UiChoice '[b]  back to CLI list' -Fg White
+        Write-UiChoice '[q]  cancel wizard' -Fg White
+        Write-UiBlank 2
+
+        $agCh = Read-LinePrompt -Label 'Agent' -Default ([string]$agDefNum)
+        if ($agCh -eq 'q' -or $agCh -eq 'Q') {
+          Stop-Wizard -How cancel
+          return
+        }
+        if ($agCh -eq 'b' -or $agCh -eq 'B') {
+          $step = 3
+          continue
+        }
+        if ($agCh -match '^\d+$') {
+          $an = [int]$agCh
+          if ($an -ge 1 -and $an -le $agList.Count) {
+            $agentChoice = [string]$agList[$an - 1]
+            $step = 5
+            continue
+          }
+        }
+        $agLow = $agCh.Trim().ToLowerInvariant()
+        if ($agList -contains $agLow) {
+          $agentChoice = [string]$agLow
+          $step = 5
+          continue
+        }
+        Write-Host '  ERROR: pick a number from the list (Enter = default)' -ForegroundColor Red
+        Start-Sleep -Milliseconds 800
+        continue
+      }
+
+      # ========== STEP 5: CONFIRM ==========
+      if ($step -eq 5) {
         if ($cliIdx -lt 0) { $step = 3; continue }
         $cliLabel = [string]$script:WzCliLabel[$cliIdx]
         $cliExe = [string]$script:WzCliExe[$cliIdx]
         $cliKind = [string]$script:WzCliKind[$cliIdx]
         $cliId = [string]$script:WzCliId[$cliIdx]
 
-        Show-WizardHeader -Title 'Step 4 / 4   Confirm create' -Hint 'Review summary, then Y to freeze and open'
+        Show-WizardHeader -Title 'Step 5 / 5   Confirm create' -Hint 'Review summary, then Y to freeze and open'
 
         Write-UiSection 'SUMMARY'
         Write-UiBlank 1
         Write-Host ("  NAME     {0}" -f $name) -ForegroundColor Green
         Write-UiBlank 1
-        Write-Host ("  PATH     {0}" -f $fullPath) -ForegroundColor Yellow
+        Write-Host ("  PATH     {0}" -f $fullPath) -ForegroundColor White
         Write-UiBlank 1
         Write-Host ("  CLI      {0}" -f $cliLabel) -ForegroundColor Cyan
         if ($cliKind -ne 'shell') {
@@ -2103,11 +2887,13 @@ function Invoke-NewTaskWizard {
           Write-UiStatic ('BINARY   {0}' -f (Format-CliLeaf $cliExe))
         }
         Write-UiBlank 1
+        Write-Host ("  AGENT    {0}   (desk-roots 3rd col, D-004)" -f $agentChoice) -ForegroundColor Cyan
+        Write-UiBlank 1
         $exists = Test-Path -LiteralPath $fullPath
         if ($exists) {
           Write-Host '  DIR      exists (bind only, no wipe)' -ForegroundColor Green
         } else {
-          Write-Host '  DIR      will create new folder' -ForegroundColor DarkYellow
+          Write-Host '  DIR      will create new folder' -ForegroundColor DarkCyan
         }
 
         Write-UiBlank 2
@@ -2116,7 +2902,7 @@ function Invoke-NewTaskWizard {
         Write-UiSection 'ACTIONS'
         Write-UiBlank 1
         Write-UiChoice '[Y]  create + bind + open' -Fg White
-        Write-UiChoice '[b]  back to CLI list' -Fg White
+        Write-UiChoice '[b]  back to agent pick' -Fg White
         Write-UiChoice '[q]  cancel (nothing written)' -Fg White
         Write-UiBlank 2
 
@@ -2126,7 +2912,7 @@ function Invoke-NewTaskWizard {
           return
         }
         if ($ok -eq 'b' -or $ok -eq 'B' -or $ok -match '^(n|N)') {
-          $step = 3
+          $step = 4
           continue
         }
 
@@ -2139,7 +2925,7 @@ function Invoke-NewTaskWizard {
             throw "Folder still missing after create: $fullPath"
           }
           Initialize-NewProjectSkeleton -Path $fullPath -Name $name
-          Set-DeskRootBinding -Name $name -Path $fullPath
+          Set-DeskRootBinding -Name $name -Path $fullPath -Agent $agentChoice
           Write-WzProjectMarkerEx -Name $name -Path $fullPath -CliId $cliId -CliExe $cliExe
           Write-Host ("  + FROZEN {0} -> {1}" -f $name, $fullPath) -ForegroundColor Green
           Write-Host ("  + README.md skeleton (empty projects crash some CLIs)" ) -ForegroundColor DarkGray
@@ -2149,7 +2935,7 @@ function Invoke-NewTaskWizard {
           } catch {}
         } catch {
           Write-Host ("  FAIL: {0}" -f $_.Exception.Message) -ForegroundColor Red
-          Write-Host '  Press Enter to stay on confirm...' -ForegroundColor Yellow
+          Write-Host '  Press Enter to stay on confirm...' -ForegroundColor White
           try { [void](Read-Host) } catch {}
           continue
         }
@@ -2161,7 +2947,7 @@ function Invoke-NewTaskWizard {
           Start-ProjectWithCli -Cwd $fullPath -Name $name -Kind $cliKind -Exe $cliExe -Label $cliLabel -Id $cliId
         } catch {
           Write-Host ("  Open failed: {0}" -f $_.Exception.Message) -ForegroundColor Red
-          Write-Host '  Project is still created and bound.' -ForegroundColor Yellow
+          Write-Host '  Project is still created and bound.' -ForegroundColor Cyan
         }
 
         try {
@@ -2178,7 +2964,7 @@ function Invoke-NewTaskWizard {
     } catch {
       Write-Host ''
       Write-Host ("  ERROR: {0}" -f $_.Exception.Message) -ForegroundColor Red
-      Write-Host '  Staying on this step. q=cancel' -ForegroundColor Yellow
+      Write-Host '  Staying on this step. q=cancel' -ForegroundColor Cyan
       Start-Sleep -Milliseconds 1500
     }
   }
@@ -2201,73 +2987,128 @@ if ($WizardOnly) {
 $running = $true
 while ($running) {
   Show-Screen
-  try {
-    $key = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
-  } catch {
-    Write-Host -NoNewline '  wz> '
-    $line = Read-Host
-    if ($line -eq 'q') { break }
-    if ($line -eq 'c') { Invoke-NewTaskWizard; continue }
-    if ($line -match '^\d+$') {
-      $r = Get-RowByIndex ([int]$line)
-      if ($r) {
-        for ($ii = 0; $ii -lt $script:Rows.Count; $ii++) {
-          if ($script:Rows[$ii].Index -eq $r.Index) { $script:Selected = $ii; break }
-        }
-        Invoke-RowPrimary $r
-      }
+
+  # ---- step 2 (armed): pick agent — SAME grammar as step 1 (D-008 kept, D-009:
+  # line input instead of per-key repaint; the screen above stays static) ----
+  if ($script:PendingRow) {
+    $peerIds = @()
+    foreach ($p in @(Get-InstalledAgentPeers)) { $peerIds += $p.Id }
+    if ($peerIds.Count -eq 0) { $peerIds = @('grok') }  # legacy fallback
+    $defIdx = 1
+    $dflt = ([string]$script:PendingRow.LaunchAgent).ToLowerInvariant()
+    for ($ii = 0; $ii -lt $peerIds.Count; $ii++) {
+      if ($peerIds[$ii] -eq $dflt) { $defIdx = $ii + 1; break }
     }
+    Write-Host -NoNewline ("  agent 1-{0} (Enter = {1} {2}, q = cancel) " -f $peerIds.Count, $defIdx, $peerIds[$defIdx - 1]) -ForegroundColor Yellow
+    $line = Read-Host
+    $line = ([string]$line).Trim()
+    if ($line -eq '') { Complete-AgentPick -Agent $peerIds[$defIdx - 1]; continue }
+    if ($line -eq 'q' -or $line -eq 'Q') {
+      $script:PendingRow = $null
+      $script:PendingForceNew = $false
+      $script:PendingLaunch = $null
+      $script:StatusHint = 'launch cancelled'
+      $script:ScreenDirty = $true
+      continue
+    }
+    $pick = 0
+    if ([int]::TryParse($line, [ref]$pick) -and $pick -ge 1 -and $pick -le $peerIds.Count) {
+      Complete-AgentPick -Agent $peerIds[$pick - 1]
+      continue
+    }
+    $script:StatusHint = ('no such agent — Enter = default, 1-' + $peerIds.Count + ', q = cancel')
+    $script:ScreenDirty = $true
     continue
   }
 
-  $vk = [int]$key.VirtualKeyCode
-  $ch = $key.Character
-
-  if ($vk -eq 38 -or $ch -eq 'k' -or $ch -eq 'K') { Move-Selection -1; continue }
-  if ($vk -eq 40 -or $ch -eq 'j' -or $ch -eq 'J') { Move-Selection 1; continue }
-  if ($vk -eq 13) { Invoke-RowPrimary (Get-SelectedRow); continue }
-  if ($vk -eq 27 -or $ch -eq 'q' -or $ch -eq 'Q') {
+  # ---- step 1: pick task / panel commands ----
+  Write-Host -NoNewline '  wz> ' -ForegroundColor Yellow
+  $line = Read-Host
+  $line = ([string]$line).Trim()
+  if ($line -eq '') { continue }  # empty Enter: no state change → no repaint
+  if ($line -eq 'q' -or $line -eq 'Q') {
     try { $Host.UI.RawUI.CursorVisible = $true } catch {}
     Write-Host '  left panel.' -ForegroundColor DarkGray
     break
   }
-  if ($ch -eq 'r' -or $ch -eq 'R') { continue }
-  if ($ch -eq 'a' -or $ch -eq 'A') { $script:ShowAll = -not $script:ShowAll; $script:Selected = 0; continue }
-  if ($ch -eq 'd' -or $ch -eq 'D') {
-    # Dashboard is global UI — not a project session (skip R1 project gate)
+  if ($line -eq 'c' -or $line -eq 'C') { Invoke-NewTaskWizard; $script:ScreenDirty = $true; continue }
+  if ($line -eq 'r' -or $line -eq 'R') { $script:RowsDirty = $true; continue }
+  if ($line -eq 'a' -or $line -eq 'A') { $script:ShowAll = -not $script:ShowAll; $script:RowsDirty = $true; continue }
+  if ($line -eq 's' -or $line -eq 'S') {
+    if ($script:Wez -and (Test-WezAlive)) {
+      & $script:Wez @('cli', 'spawn', '--', 'powershell.exe', '-NoLogo') 2>$null | Out-Null
+      $script:StatusHint = 'shell tab opened'
+    } else {
+      $script:StatusHint = 'wezterm not alive — cannot spawn shell tab'
+    }
+    $script:ScreenDirty = $true
+    continue
+  }
+  if ($line -eq 'd' -or $line -eq 'D') {
+    # Dashboard is grok-only global UI — not a project session (skip R1 project gate)
+    # L-6: grok absent → disable d with a hint instead of a red NotFound error
+    if (-not ($script:Grok -and (Test-Path -LiteralPath $script:Grok))) {
+      $script:StatusHint = 'Dashboard 需要 grok CLI（当前未安装）— d 已禁用'
+      $script:ScreenDirty = $true
+      continue
+    }
     if ($script:Wez -and (Test-WezAlive)) {
       & $script:Wez @('cli', 'spawn', '--', $script:Grok, 'dashboard') 2>$null | Out-Null
-      $script:StatusHint = 'Dashboard opened (not a project session)'
+      $script:StatusHint = 'Dashboard opened (grok only, not a project session)'
     } else {
       & $script:Grok dashboard
     }
+    $script:ScreenDirty = $true
     continue
   }
-  if ($ch -eq 'c' -or $ch -eq 'C') { Invoke-NewTaskWizard; continue }
-  if ($ch -eq 'n' -or $ch -eq 'N') { Invoke-RowNewSession (Get-SelectedRow); continue }
-  if ($ch -eq 'i' -or $ch -eq 'I') { Show-RowDetail (Get-SelectedRow); continue }
-  if ($ch -eq 's' -or $ch -eq 'S') {
-    if ($script:Wez -and (Test-WezAlive)) {
-      & $script:Wez @('cli', 'spawn', '--', 'powershell.exe', '-NoLogo') 2>$null | Out-Null
-    }
-    continue
-  }
-  if ($ch -ge '0' -and $ch -le '9') {
-    try { $Host.UI.RawUI.CursorVisible = $true } catch {}
-    Write-Host -NoNewline ("  wz> {0}" -f $ch) -ForegroundColor Magenta
-    $rest = Read-Host
-    $line = ($ch + $rest).Trim()
-    if ($line -match '^\d+$') {
-      $r = Get-RowByIndex ([int]$line)
-      if ($r) {
-        for ($ii = 0; $ii -lt $script:Rows.Count; $ii++) {
-          if ($script:Rows[$ii].Index -eq $r.Index) { $script:Selected = $ii; break }
-        }
-        Invoke-RowPrimary $r
+  if ($line -match '^\d+$') {
+    # D-010 combo fast path: in the 9-row default view a two-digit input is
+    # <task><agent> — gates still run (Invoke-RowPrimary), launch is immediate.
+    if ($line.Length -eq 2 -and -not $script:ShowAll -and $script:Rows.Count -le 9) {
+      $tIdx = [int]$line.Substring(0, 1)
+      $aIdx = [int]$line.Substring(1, 1)
+      $peerIdsC = @()
+      foreach ($p in @(Get-InstalledAgentPeers)) { $peerIdsC += $p.Id }
+      $r = Get-RowByIndex $tIdx
+      if (-not $r) { $script:StatusHint = ('no task #' + $tIdx); $script:ScreenDirty = $true; continue }
+      if ($aIdx -lt 1 -or $aIdx -gt $peerIdsC.Count) {
+        $script:StatusHint = ('combo agent digit must be 1-' + $peerIdsC.Count + ' (your pick: ' + $aIdx + ')')
+        $script:ScreenDirty = $true
+        continue
       }
+      Invoke-RowPrimary $r
+      if ($script:PendingRow) { Complete-AgentPick -Agent $peerIdsC[$aIdx - 1] }
+      continue
     }
+    $r = Get-RowByIndex ([int]$line)
+    if ($r) { Invoke-RowPrimary $r } else { $script:StatusHint = ('no row #' + $line); $script:ScreenDirty = $true }
     continue
   }
+  if ($line -match '^[nN]\s*(\d+)$') {
+    $digits = $Matches[1]
+    # D-010 combo, forced-new variant: n13 = task 1, agent 3, new session
+    if ($digits.Length -eq 2 -and -not $script:ShowAll -and $script:Rows.Count -le 9) {
+      $tIdx = [int]$digits.Substring(0, 1)
+      $aIdx = [int]$digits.Substring(1, 1)
+      $peerIdsC = @()
+      foreach ($p in @(Get-InstalledAgentPeers)) { $peerIdsC += $p.Id }
+      $r = Get-RowByIndex $tIdx
+      if (-not $r) { $script:StatusHint = ('no task #' + $tIdx); $script:ScreenDirty = $true; continue }
+      if ($aIdx -lt 1 -or $aIdx -gt $peerIdsC.Count) {
+        $script:StatusHint = ('combo agent digit must be 1-' + $peerIdsC.Count)
+        $script:ScreenDirty = $true
+        continue
+      }
+      Invoke-RowNewSession $r
+      if ($script:PendingRow) { Complete-AgentPick -Agent $peerIdsC[$aIdx - 1] }
+      continue
+    }
+    $r = Get-RowByIndex ([int]$digits)
+    if ($r) { Invoke-RowNewSession $r } else { $script:StatusHint = ('no row #' + $digits); $script:ScreenDirty = $true }
+    continue
+  }
+  $script:StatusHint = 'unknown — <num>=task · n<num>=new session · c=create · r=refresh · a=all · s=shell · q=quit'
+  $script:ScreenDirty = $true
 }
 
 try { $Host.UI.RawUI.CursorVisible = $true } catch {}

@@ -1,6 +1,7 @@
--- AI STAR CUBE · toggleable shortcuts cheatsheet (F8 / Leader+h)
+-- AI STAR CUBE · toggleable shortcuts cheatsheet (F1)
 --
--- Window-local only (WezTerm focused). F1 avoided (OS Help).
+-- Window-local only (WezTerm focused). F1 may be swallowed by Windows Help
+-- on some machines — the 面板内 q always works.
 local wezterm = require("wezterm")
 local act = wezterm.action
 
@@ -154,7 +155,7 @@ function M.toggle(window, pane)
   toast(
     window,
     "AI STAR CUBE",
-    "快捷键面板 · F8 或 Alt+z h 关闭 · 面板内 q",
+    "快捷键面板 · F1 再按一次关闭 · 面板内 q",
     2800
   )
 end

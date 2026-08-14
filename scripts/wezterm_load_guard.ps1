@@ -92,13 +92,15 @@ if (-not (Test-Path $launch)) {
   if ($text -match "run_child_process\s*\(\s*\{\s*'where") {
     $fail.Add('launch.lua: run_child_process + where.exe single-quote pattern (config-load bomb)')
   }
+  # Generalized (D-004 agent registry): any resolve_<name>_exe → M.<name>_exe
+  # path, not just grok. Backreference keeps function/field names paired.
   $chunk = [regex]::Match(
     $text,
-    'function resolve_grok_exe[\s\S]*?^M\.grok_exe\s*=',
+    'function resolve_(\w+)_exe[\s\S]*?^M\.\1_exe\s*=',
     [System.Text.RegularExpressions.RegexOptions]::Multiline
   )
   if ($chunk.Success -and $chunk.Value -match 'run_child_process') {
-    $fail.Add('launch.lua: resolve_grok_exe path to M.grok_exe uses run_child_process')
+    $fail.Add(('launch.lua: resolve_{0}_exe path to M.{0}_exe uses run_child_process' -f $chunk.Groups[1].Value))
   }
   foreach ($h in (Test-LoadScopeSpawn -FilePath $launch)) { $fail.Add([string]$h) }
   if ($text -notmatch 'MUST NOT call wezterm\.run_child_process') {

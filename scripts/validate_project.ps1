@@ -209,6 +209,36 @@ foreach ($relative in $requiredFiles) {
     }
 }
 
+# L-4 hardening: PS 5.1 reads a BOM-less UTF-8 file as GBK, and any CJK byte
+# then breaks parsing (bit us twice on 2026-08-13). Files consumed by
+# Windows PowerShell 5.1 that contain non-ASCII MUST carry a UTF-8 BOM.
+# Pure-ASCII files pass silently, so over-listing is safe.
+$bomRequired = @(
+    'live-workbench/workbench/bootstrap.ps1',
+    'live-workbench/workbench/sidebar.ps1',
+    'live-workbench/workbench/cheatsheet.ps1',
+    'live-workbench/workbench/cheatsheet.txt',
+    'live-workbench/workbench/profile-snippet.ps1',
+    'Install-WZ.ps1',
+    'open-project.ps1'
+)
+foreach ($relative in $bomRequired) {
+    $bomPath = Join-Path $rootFull $relative
+    if (-not (Test-Path -LiteralPath $bomPath -PathType Leaf)) { continue }
+    $bomBytes = [System.IO.File]::ReadAllBytes($bomPath)
+    $hasBom = ($bomBytes.Length -ge 3 -and
+        $bomBytes[0] -eq 0xEF -and $bomBytes[1] -eq 0xBB -and $bomBytes[2] -eq 0xBF)
+    if (-not $hasBom) {
+        $hasNonAscii = $false
+        foreach ($b in $bomBytes) {
+            if ($b -gt 0x7F) { $hasNonAscii = $true; break }
+        }
+        if ($hasNonAscii) {
+            Add-ValidationError "$relative has non-ASCII content but no UTF-8 BOM (PS 5.1 will misread it as GBK)."
+        }
+    }
+}
+
 $statePath = Join-Path $rootFull 'PROJECT_STATE.md'
 $decisionPath = Join-Path $rootFull 'DECISIONS.md'
 $contextPath = Join-Path $rootFull 'CONTEXT.md'

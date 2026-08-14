@@ -1,7 +1,7 @@
 -- AI STAR CUBE · slim F-key workbench (no Leader)
 --
 -- Core map (single keys only; mouse for Init via +):
---   F2  unbound — Grok settings
+--   F2  unbound — 留给 AI agent 自身（设置/快捷键）
 --   F3  NEW local project wizard (name → parent choice → freeze → open)
 --   F4  close pane
 --   F5  reload WezTerm config
@@ -46,10 +46,10 @@ function M.apply(config)
 
   config.keys = {
     ------------------------------------------------------------------
-    -- F1–F7 workbench (F2 free for Grok)
+    -- F1–F7 workbench (F2 free for AI agents)
     ------------------------------------------------------------------
     { key = "F1", mods = "NONE", action = cb(help.toggle) },
-    -- F2 intentionally unbound (Grok settings)
+    -- F2 intentionally unbound (留给 AI agent 自身)
     { key = "F3", mods = "NONE", action = cb(resume.show_new_project) },
     { key = "F4", mods = "NONE", action = act.CloseCurrentPane({ confirm = true }) },
     { key = "F5", mods = "NONE", action = act.ReloadConfiguration },

@@ -124,8 +124,14 @@ local function tab_tool(proc, title)
     if s:find("grok", 1, true) then
       return "Grok"
     end
+    if s:find("kimi", 1, true) then
+      return "Kimi"
+    end
     if s:find("codex", 1, true) then
       return "Codex"
+    end
+    if s:find("deepseek", 1, true) then
+      return "DeepSeek"
     end
     if s:find("claude", 1, true) then
       return "Claude"
@@ -263,8 +269,95 @@ local function tab_has_unseen_output(tab, pane, panes)
   return pane_has_unseen(pane)
 end
 
+--- D-012 pin: a tab containing an Init pane ALWAYS renders "Init".
+--- Detection = foreground process argv contains "bootstrap.ps1"/"wz-init"
+--- (the same mechanism desk.lua gating already relies on; works on every
+--- birth path incl. Ctrl+T default_prog where no tab:set_title ever runs).
+--- PERF (2026-08-14 二轮): get_foreground_process_info on every repaint wave
+--- made the whole GUI stutter. Steady state must be pure string compares:
+--- (1) pre-filter on the FREE snapshot field foreground_process_name — only
+---     shell hosts (powershell/pwsh/cmd) can be the Init panel, agent panes
+---     (grok/kimi/node/codex…) return false with zero mux round-trips;
+--- (2) argv scan result cached per pane_id, TTL 30s, invalidated when the
+---     foreground process name changes; pane_id is only resolved for the
+---     shell-host minority.
+local init_pane_cache = {} --- pane_id -> { ts = os.time(), v = bool, proc = string }
+local INIT_CACHE_TTL = 30
+
+local function pane_is_init(p)
+  if not p then
+    return false
+  end
+  local proc = ""
+  pcall(function()
+    proc = tostring(p.foreground_process_name or ""):lower()
+  end)
+  local shellish = proc == ""
+    or proc:find("powershell", 1, true)
+    or proc:find("pwsh", 1, true)
+    or proc:find("cmd.exe", 1, true)
+  if not shellish then
+    return false
+  end
+  local pid = nil
+  pcall(function()
+    pid = p.pane_id
+  end)
+  if not pid then
+    return false
+  end
+  local now = os.time()
+  local ent = init_pane_cache[pid]
+  if ent and ent.proc == proc and (now - ent.ts) < INIT_CACHE_TTL then
+    return ent.v
+  end
+  local v = false
+  pcall(function()
+    local mp = wezterm.mux.get_pane(pid)
+    local info = mp and mp:get_foreground_process_info()
+    if info and info.argv then
+      for _, a in ipairs(info.argv) do
+        local s = tostring(a):lower()
+        if s:find("bootstrap.ps1", 1, true) or s:find("wz-init", 1, true) then
+          v = true
+          break
+        end
+      end
+    end
+  end)
+  init_pane_cache[pid] = { ts = now, v = v, proc = proc }
+  return v
+end
+
+local function tab_has_init_pane(tab)
+  if not tab then
+    return false
+  end
+  local list = nil
+  pcall(function()
+    if type(tab.panes) == "table" then
+      list = tab.panes
+    end
+  end)
+  if (not list or #list == 0) and tab.active_pane then
+    list = { tab.active_pane }
+  end
+  if type(list) ~= "table" then
+    return false
+  end
+  for _, p in ipairs(list) do
+    if pane_is_init(p) then
+      return true
+    end
+  end
+  return false
+end
+
 --- Pure navigation label: "Project | Role" — never full paths, never literal "Tab".
 local function tab_project(tab, pane, proc)
+  if tab_has_init_pane(tab) then
+    return nil, "Init"
+  end
   local t = tab.tab_title
   local tool = tab_tool(proc, t)
   -- Utility panes: role-only navigation (no project file bleed)
@@ -484,6 +577,21 @@ function M.apply(config)
     -- Guard: never surface engine fallback junk in the tab bar
     if tool == "Tab" or tool == "tab" then
       tool = "App"
+    end
+
+    -- D-004: no agent process detected → fall back to desk-roots 3rd column.
+    -- grok is the implicit default, so only kimi/codex/deepseek surface this
+    -- way; otherwise nothing is shown (plain Shell/App).
+    if tool == "Shell" or tool == "App" then
+      local agent_root = desk.get_tab_desk_by_id(tab.tab_id)
+      local agent = agent_root and desk.agent_for_path(agent_root) or nil
+      if agent == "kimi" then
+        tool = "Kimi"
+      elseif agent == "codex" then
+        tool = "Codex"
+      elseif agent == "deepseek" then
+        tool = "DeepSeek"
+      end
     end
 
     -- Pure navigation label (our only customization). Length does not depend on activity.
