@@ -58,7 +58,7 @@ function M.show_new_project(window, pane)
 end
 
 --- Continue latest session for current tab project (fast path)
---- D-004: dispatch by the task's agent (desk-roots 3rd column); grok 兜底
+--- Dispatch by the task route; an unbound legacy row uses open discovery first.
 function M.continue_current(window, pane)
   local name, root = desk.resolve_tab_task(window, pane)
   if not desk.is_strong_path(root) then
@@ -66,19 +66,27 @@ function M.continue_current(window, pane)
     M.show_hub(window, pane)
     return
   end
-  local agent = desk.agent_for_path(root) or "grok"
+  local agent = desk.agent_for_path(root)
+  if not agent or not launch.has_agent(agent) then
+    local available = launch.installed_agents(true)
+    agent = available[1]
+  end
   -- M-1 (D-005): check the RESOLVED agent, not just grok — a bound-but-
   -- uninstalled CLI must toast here instead of dying in a new tab.
   if not launch.has_agent(agent) then
     toast(
       window,
       "继续对话",
-      "未找到 " .. agent .. " CLI — 请在 desk-roots 第三列改绑已安装 agent（grok/kimi/codex/deepseek）",
+      "未找到可用 Agent CLI — 请安装自描述 Agent 或修正 desk-roots 第三列",
       5000
     )
     return
   end
   local args = launch.agent_args(agent, root, { continue_session = true })
+  if not args then
+    toast(window, "继续对话", "Agent inventory changed — reopen Init or retry", 4500)
+    return
+  end
   local mux_window = window:mux_window()
   local tab, main = mux_window:spawn_tab({
     args = args,
@@ -97,7 +105,10 @@ function M.continue_current(window, pane)
       desk.set_root(pname, root)
     end
   end
-  local resume_cmd = "grok -c"
+  local resume_cmd = launch.agent_label(agent) .. "（按项目 cwd 新开；无专属续聊适配器）"
+  if agent == "grok" then
+    resume_cmd = "grok --continue"
+  end
   if agent == "kimi" then
     resume_cmd = "kimi --continue"
   elseif agent == "codex" then
@@ -110,16 +121,25 @@ end
 
 --- Used by gui-startup: should first window be the bootstrap panel?
 function M.should_bootstrap_on_startup(cmd)
-  -- If user passed an explicit program (e.g. grok --cwd …), respect it
+  -- If the caller passed an explicit non-shell program, respect it. This is
+  -- deliberately product-neutral: a newly installed Agent must not be hidden
+  -- behind Init merely because its name never appeared in this source tree.
   if cmd and cmd.args and #cmd.args > 0 then
     local a0 = tostring(cmd.args[1] or ""):lower()
     if a0:find("bootstrap.ps1", 1, true) then
       return false -- already bootstrapping
     end
-    if a0:find("grok", 1, true) or a0:find("kimi", 1, true) or a0:find("codex", 1, true) or a0:find("deepseek", 1, true) then
+    local leaf = a0:gsub("/", "\\"):match("([^\\]+)$") or a0
+    local plain_shell = leaf == "powershell"
+      or leaf == "powershell.exe"
+      or leaf == "pwsh"
+      or leaf == "pwsh.exe"
+      or leaf == "cmd"
+      or leaf == "cmd.exe"
+    if not plain_shell or #cmd.args > 1 then
       return false
     end
-    -- bare powershell / pwsh without our panel → still show bootstrap as home
+    -- Bare shell without our panel → still show bootstrap as home.
   end
   -- Opt-out: create empty file ~/.config/wezterm/workbench/no-bootstrap
   local flag = home .. "\\.config\\wezterm\\workbench\\no-bootstrap"

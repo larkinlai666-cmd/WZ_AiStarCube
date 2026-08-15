@@ -15,6 +15,13 @@ local desk = require("workbench.desk")
 
 local M = {}
 
+local function route_label(id)
+  local text = tostring(id or ""):gsub("[-_]", " ")
+  return (text:gsub("(%a)([%w']*)", function(first, rest)
+    return first:upper() .. rest
+  end))
+end
+
 -- Bump on every status logic change so stacked old handlers no-op
 local STATUS_GEN = 29
 
@@ -117,49 +124,10 @@ local function tab_tool(proc, title)
   proc = (proc or ""):lower()
   title = (title or ""):lower()
 
-  local function from_text(s)
-    if not s or s == "" then
-      return nil
-    end
-    if s:find("grok", 1, true) then
-      return "Grok"
-    end
-    if s:find("kimi", 1, true) then
-      return "Kimi"
-    end
-    if s:find("codex", 1, true) then
-      return "Codex"
-    end
-    if s:find("deepseek", 1, true) then
-      return "DeepSeek"
-    end
-    if s:find("claude", 1, true) then
-      return "Claude"
-    end
-    if s:find("gemini", 1, true) then
-      return "Gemini"
-    end
-    if s:find("aider", 1, true) then
-      return "Aider"
-    end
-    if s:find("opencode", 1, true) then
-      return "OpenCode"
-    end
-    if s:find("cursor", 1, true) then
-      return "Cursor"
-    end
-    return nil
-  end
-
-  -- Prefer title (launcher sets "name | Codex") over process name
-  local by_title = from_text(title)
-  if by_title then
-    return by_title
-  end
-
-  local by_proc = from_text(proc)
-  if by_proc then
-    return by_proc
+  -- Generic launcher title contract: "project | <dynamic agent label>".
+  local title_agent = title:match("|%s*([^|]+)%s*$")
+  if title_agent and title_agent ~= "shell" and title_agent ~= "app" then
+    return route_label(title_agent)
   end
 
   if proc:find("node", 1, true) then
@@ -579,18 +547,12 @@ function M.apply(config)
       tool = "App"
     end
 
-    -- D-004: no agent process detected → fall back to desk-roots 3rd column.
-    -- grok is the implicit default, so only kimi/codex/deepseek surface this
-    -- way; otherwise nothing is shown (plain Shell/App).
+    -- No process identity detected: any dynamic desk-roots route is displayable.
     if tool == "Shell" or tool == "App" then
       local agent_root = desk.get_tab_desk_by_id(tab.tab_id)
       local agent = agent_root and desk.agent_for_path(agent_root) or nil
-      if agent == "kimi" then
-        tool = "Kimi"
-      elseif agent == "codex" then
-        tool = "Codex"
-      elseif agent == "deepseek" then
-        tool = "DeepSeek"
+      if agent and agent ~= "" and agent ~= "shell" then
+        tool = route_label(agent)
       end
     end
 

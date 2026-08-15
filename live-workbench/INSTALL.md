@@ -1,46 +1,46 @@
-# Live workbench install
+# Live workbench installation
 
-**Prefer the repo-root installer** (handles backup, empty roots, bind clone, doctor):
+仅支持 Windows。优先使用仓库根目录安装器，它负责备份、校验、原子写入、空清单初始化和当前仓库绑定：
 
 ```powershell
-# from repository root
 powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1
 ```
 
-## Manual install (Windows)
+## 手动安装
 
-Only if you cannot run `Install-WZ.ps1`:
+只有在无法运行安装器时才使用以下方式：
 
-1. Install [WezTerm](https://wezfurlong.org/wezterm/) and at least one agent CLI — Grok Build CLI, Kimi Code CLI, or OpenAI Codex CLI (any one is enough; grok is NOT required).
-2. Backup `%USERPROFILE%\.config\wezterm` if it exists.
-3. Copy:
+1. 安装 WezTerm、PowerShell 5.1+ 和至少一个能由元数据识别的 AI Agent CLI。
+2. 备份 `%USERPROFILE%\.config\wezterm`。
+3. 将 `live-workbench\wezterm.lua` 与整个 `live-workbench\workbench` 复制到 `%USERPROFILE%\.config\wezterm`。
+4. 新建空的 `workbench\desk-roots.tsv`；不要把示例项目清单当作真实清单。
+5. 重启 WezTerm，在 Init 中按 `c` 创建项目，或从项目目录运行 `open-project.ps1`。
 
-```powershell
-$src = "path\to\clone\live-workbench"
-$dst = Join-Path $env:USERPROFILE ".config\wezterm"
-New-Item -ItemType Directory -Force -Path (Join-Path $dst "workbench") | Out-Null
-Copy-Item "$src\wezterm.lua" $dst -Force
-Copy-Item "$src\workbench\*.lua" (Join-Path $dst "workbench") -Force
-Copy-Item "$src\workbench\*.ps1" (Join-Path $dst "workbench") -Force
-Copy-Item "$src\workbench\*.txt" (Join-Path $dst "workbench") -Force
-Copy-Item "$src\workbench\*.cmd" (Join-Path $dst "workbench") -Force
-# Create EMPTY bindings — do NOT copy example.tsv as real desk-roots
-@'
-# desk roots - project_name<TAB>absolute_path
-'@ | Set-Content (Join-Path $dst "workbench\desk-roots.tsv") -Encoding UTF8
+## Agent 发现
+
+发现器会扫描 PATH、npm/Python 包元数据、`*.wz-agent.json` 和安装目录中的可验证入口。没有可用元数据的独立二进制可写入：
+
+```text
+%USERPROFILE%\.config\wezterm\workbench\agent-registry.local.tsv
 ```
 
-4. Restart WezTerm.
-5. Init panel → `c` create a project, or run `.\open-project.ps1` from a project folder.
+每行格式：
 
-## Optional env
+```text
+id<TAB>label<TAB>C:\absolute\path\agent.exe
+```
 
-| Variable | Meaning |
-|----------|---------|
-| `WZ_PROJECTS_ROOT` | Default parent folder for Init `c` wizard |
+`id` 只能包含小写字母、数字、下划线和连字符。第三列也可填写 PATH 中的命令名，并用 `|` 提供多个入口别名；发现结果始终保存解析后的准确路径。修改后在 Init 面板按 `r` 重新发现。
 
-## Not portable (by design)
+## 可选环境变量
 
-- Author's personal `desk-roots.tsv`
-- `~\.grok\sessions` transcripts
-- Non-Windows shells (PowerShell modules are the runtime)
+| 变量 | 作用 |
+|---|---|
+| `WZ_PROJECTS_ROOT` | Init 新建项目的默认父目录 |
+
+## 不随安装迁移
+
+- 原设备的项目清单、收藏和最近目录
+- Agent 会话、账户或凭据
+- 私有 `agent-registry.local.tsv`
+- 任何非 Windows 运行时适配

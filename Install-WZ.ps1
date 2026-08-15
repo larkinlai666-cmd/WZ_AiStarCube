@@ -1,15 +1,14 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  One-shot installer: make this machine's WezTerm match WZ_AiStarCube workbench.
+  One-shot Windows installer for the WZ_AiStarCube_win WezTerm workbench.
 
 .DESCRIPTION
-  Copies live-workbench/ → %USERPROFILE%\.config\wezterm\
-  Creates empty desk-roots (or binds this repo), runs doctor checks.
+  Copies live-workbench/ → %USERPROFILE%\.config\wezterm\ using verified,
+  atomic writes. Creates empty desk-roots (or binds this repo), then runs doctor.
 
-  After success, other users get the SAME workflow shell as the author
-  (keys, Init panel, gates, F6–F9). Their project list starts empty or
-  with this repo only — personal projects are created via Init `c`.
+  The install contains no private tasks, Agent credentials, or conversations.
+  Other users receive the same keys, Init panel, gates, and open Agent discovery.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1
@@ -25,6 +24,64 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Test-WindowsHost {
+  return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+}
+
+function Commit-WzAtomicFile {
+  param([string]$TemporaryPath, [string]$Destination)
+  $backup = $Destination + '.swap.' + $PID + '.' + [guid]::NewGuid().ToString('N')
+  try {
+    if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+      [System.IO.File]::Replace($TemporaryPath, $Destination, $backup, $true)
+    } else {
+      [System.IO.File]::Move($TemporaryPath, $Destination)
+    }
+  } finally {
+    if ((Test-Path -LiteralPath $backup -PathType Leaf) -and -not (Test-Path -LiteralPath $Destination -PathType Leaf)) {
+      [System.IO.File]::Move($backup, $Destination)
+    }
+    if (Test-Path -LiteralPath $backup -PathType Leaf) {
+      Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
+function Write-WzUtf8LinesAtomic {
+  param([string]$Path, [string[]]$Lines)
+  $dir = Split-Path -Parent $Path
+  if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+  }
+  $tmp = Join-Path $dir ((Split-Path -Leaf $Path) + '.tmp.' + $PID + '.' + [guid]::NewGuid().ToString('N'))
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  try {
+    [System.IO.File]::WriteAllLines($tmp, $Lines, $utf8)
+    Commit-WzAtomicFile -TemporaryPath $tmp -Destination $Path
+  } finally {
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+  }
+}
+
+function Copy-WzFileAtomic {
+  param([string]$Source, [string]$Destination)
+  $dir = Split-Path -Parent $Destination
+  if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+  }
+  $tmp = Join-Path $dir ((Split-Path -Leaf $Destination) + '.tmp.' + $PID + '.' + [guid]::NewGuid().ToString('N'))
+  try {
+    Copy-Item -LiteralPath $Source -Destination $tmp -Force
+    if ((Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash) {
+      throw "Copy verification failed: $Source"
+    }
+    Commit-WzAtomicFile -TemporaryPath $tmp -Destination $Destination
+  } finally {
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+  }
+}
+
 $RepoRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
 $Src = Join-Path $RepoRoot "live-workbench"
 $Dst = Join-Path $env:USERPROFILE ".config\wezterm"
@@ -43,48 +100,16 @@ function Test-CommandExists([string]$Name) {
   return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
-# Agents are peers (grok / kimi / codex / deepseek) — none is a hard prerequisite.
-# Resolve order per agent: PATH first, then well-known install locations.
-# Note: USERPROFILE / APPDATA / LOCALAPPDATA / ProgramFiles can be EMPTY in
-# stripped environments (spawned shells, CI) — Join-Path $null crashes the
-# whole Doctor.
-function Resolve-AgentExe([string]$Name) {
-  $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-  if ($cmd -and $cmd.Source -and (Test-Path -LiteralPath $cmd.Source)) { return $cmd.Source }
-  $candidates = @()
-  $la = $env:LOCALAPPDATA
-  $up = $env:USERPROFILE
-  $ad = $env:APPDATA
-  switch ($Name) {
-    'grok' {
-      if ($up) { $candidates += (Join-Path $up ".grok\bin\grok.exe") }
-      if ($la) { $candidates += (Join-Path $la "Programs\grok\grok.exe") }
-    }
-    'kimi' {
-      if ($up) {
-        $candidates += (Join-Path $up ".kimi-code\bin\kimi.exe")
-        $candidates += (Join-Path $up ".kimi-code\bin\kimi.cmd")
-      }
-    }
-    'codex' {
-      # WinGet shim links (codex is typically a .cmd shim here)
-      if ($la) {
-        $candidates += (Join-Path $la "Microsoft\WinGet\Links\codex.exe")
-        $candidates += (Join-Path $la "Microsoft\WinGet\Links\codex.cmd")
-      }
-    }
-    'deepseek' {
-      # npm global install (@kavienw/deepseek-cli) → %APPDATA%\npm\deepseek.cmd
-      if ($ad) {
-        $candidates += (Join-Path $ad "npm\deepseek.cmd")
-        $candidates += (Join-Path $ad "npm\deepseek.exe")
-      }
-    }
+function Get-DetectedAgents {
+  # Same open, metadata-driven inventory as Init/F3/F6. No product whitelist.
+  $helper = Join-Path $WbDst 'agent-discovery.ps1'
+  $root = $WbDst
+  if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+    $root = Join-Path $Src 'workbench'
+    $helper = Join-Path $root 'agent-discovery.ps1'
   }
-  foreach ($c in $candidates) {
-    if ($c -and (Test-Path -LiteralPath $c)) { return $c }
-  }
-  return $null
+  if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) { return @() }
+  try { return @(& $helper -WorkbenchDir $root) } catch { return @() }
 }
 
 function Resolve-WezExe {
@@ -104,12 +129,11 @@ function Invoke-Doctor {
   Write-Step "Doctor (preflight)"
   $fail = 0
 
-  if ($env:OS -and $env:OS -notmatch "Windows") {
-    Write-Bad "This workbench snapshot targets Windows + PowerShell + WezTerm."
+  if (-not (Test-WindowsHost)) {
+    Write-Bad "This repository supports Windows only (PowerShell 5.1+ and WezTerm)."
     $fail++
   } else {
-    # empty $env:OS = stripped spawn env, not a non-Windows host
-    Write-Ok "Windows host"
+    Write-Ok "Windows host (supported platform)"
   }
 
   $wez = Resolve-WezExe
@@ -118,22 +142,10 @@ function Invoke-Doctor {
     $fail++
   }
 
-  # Agents are peers: at least ONE of grok/kimi/codex/deepseek must be usable.
-  # A missing grok only warns — kimi/codex/deepseek-only setups are fully supported.
-  $foundAgents = @()
-  foreach ($a in @('grok', 'kimi', 'codex', 'deepseek')) {
-    $exe = Resolve-AgentExe $a
-    if ($exe) {
-      Write-Ok "$a CLI: $exe"
-      $foundAgents += $a
-    } elseif ($a -eq 'grok') {
-      Write-Warn "grok CLI not found — fine if you only use kimi/codex/deepseek (可只用 kimi/codex/deepseek)"
-    } else {
-      Write-Warn "$a CLI not found"
-    }
-  }
+  $foundAgents = @(Get-DetectedAgents)
+  foreach ($a in $foundAgents) { Write-Ok ("Agent {0}: {1}" -f $a.Label, $a.Exe) }
   if ($foundAgents.Count -eq 0) {
-    Write-Bad "No agent CLI found (grok / kimi / codex / deepseek). Install at least one."
+    Write-Bad "No self-described or locally registered agent CLI found. Install at least one."
     Write-Warn "Workbench UI still installs; AI tabs need an agent CLI to be useful."
     $fail++
   }
@@ -167,10 +179,7 @@ function Invoke-Doctor {
   } elseif ($env:WZ_PROJECTS_ROOT) {
     Write-Ok "env WZ_PROJECTS_ROOT=$($env:WZ_PROJECTS_ROOT)"
   } else {
-    # NOTE: "GrokProjects"/"GrokProject" is a HISTORICAL name kept for backward
-    # compatibility with existing installs — the default root is agent-neutral
-    # in practice. Do not rename the path itself (would orphan existing roots).
-    Write-Warn "No WZ_PROJECTS_ROOT — new projects default to Documents\GrokProjects or existing *:\GrokProject"
+    Write-Warn "No WZ_PROJECTS_ROOT — new projects default to Documents\AIProjects"
   }
 
   Write-Host ""
@@ -186,6 +195,11 @@ function Backup-Existing {
   if (-not (Test-Path -LiteralPath $Dst)) { return }
   $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
   $bak = Join-Path $env:USERPROFILE ".config\wezterm.bak-$stamp"
+  $suffix = 1
+  while (Test-Path -LiteralPath $bak) {
+    $bak = Join-Path $env:USERPROFILE (".config\wezterm.bak-{0}-{1}" -f $stamp, $suffix)
+    $suffix++
+  }
   Write-Step "Backup existing config → $bak"
   Copy-Item -LiteralPath $Dst -Destination $bak -Recurse -Force
   Write-Ok "Backup complete"
@@ -199,6 +213,7 @@ function Install-Workbench {
     (Join-Path $Src "wezterm.lua"),
     (Join-Path $Src "workbench\desk.lua"),
     (Join-Path $Src "workbench\bootstrap.ps1"),
+    (Join-Path $Src "workbench\agent-discovery.ps1"),
     (Join-Path $Src "workbench\keys.lua"),
     (Join-Path $Src "workbench\status.lua"),
     (Join-Path $Src "workbench\projects.lua")
@@ -209,27 +224,26 @@ function Install-Workbench {
 
   Write-Step "Install workbench → $Dst"
   New-Item -ItemType Directory -Force -Path $WbDst | Out-Null
-  Copy-Item (Join-Path $Src "wezterm.lua") (Join-Path $Dst "wezterm.lua") -Force
+  Copy-WzFileAtomic -Source (Join-Path $Src "wezterm.lua") -Destination (Join-Path $Dst "wezterm.lua")
   if (Test-Path (Join-Path $Src "README.md")) {
-    Copy-Item (Join-Path $Src "README.md") (Join-Path $Dst "README.md") -Force
+    Copy-WzFileAtomic -Source (Join-Path $Src "README.md") -Destination (Join-Path $Dst "README.md")
   }
   Get-ChildItem (Join-Path $Src "workbench") -File | ForEach-Object {
     # Never overwrite personal bindings with examples
-    if ($_.Name -match '^(desk-roots|favorites)') { return }
+    if ($_.Name -match '^(desk-roots|favorites|agent-registry\.local)') { return }
     if ($_.Name -match '\.example\.') { return }
-    Copy-Item $_.FullName (Join-Path $WbDst $_.Name) -Force
+    Copy-WzFileAtomic -Source $_.FullName -Destination (Join-Path $WbDst $_.Name)
   }
   Write-Ok "Copied wezterm.lua + workbench modules"
 
   $roots = Join-Path $WbDst "desk-roots.tsv"
   if (-not (Test-Path -LiteralPath $roots)) {
-    $utf8 = New-Object System.Text.UTF8Encoding $false
     $lines = @(
       "# AI STAR CUBE desk roots - project_name<TAB>absolute_path",
       "# Created by Install-WZ.ps1 — add projects via Init panel key  c  or open-project.ps1",
       "# Weak paths (home/Desktop/Documents root/Downloads) are NOT valid project roots"
     )
-    [System.IO.File]::WriteAllLines($roots, $lines, $utf8)
+    Write-WzUtf8LinesAtomic -Path $roots -Lines $lines
     Write-Ok "Created empty desk-roots.tsv"
   } else {
     Write-Ok "Kept existing desk-roots.tsv (personal bindings preserved)"
@@ -237,9 +251,19 @@ function Install-Workbench {
 
   $fav = Join-Path $WbDst "favorites.txt"
   if (-not (Test-Path -LiteralPath $fav)) {
-    $utf8 = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllLines($fav, @("# favorites — one absolute path per line"), $utf8)
+    Write-WzUtf8LinesAtomic -Path $fav -Lines @("# favorites — one absolute path per line")
     Write-Ok "Created empty favorites.txt"
+  }
+
+  $localAgents = Join-Path $WbDst 'agent-registry.local.tsv'
+  if (-not (Test-Path -LiteralPath $localAgents)) {
+    Write-WzUtf8LinesAtomic -Path $localAgents -Lines @(
+      '# Optional fallback for silent standalone CLIs: id<TAB>label<TAB>command aliases separated by |',
+      '# Metadata-discovered npm/Python/manifest agents do not need a row here.'
+    )
+    Write-Ok 'Created agent-registry.local.tsv (open local fallback)'
+  } else {
+    Write-Ok 'Kept agent-registry.local.tsv (personal Agent registrations preserved)'
   }
 }
 
@@ -251,16 +275,15 @@ function Bind-ThisRepo {
   Write-Step "Bind this clone as first TASK"
   $name = Split-Path -Leaf $RepoRoot
   if ($name -match '^(?i:home|desktop|documents|downloads)$') {
-    Write-Warn "Repo folder name '$name' is reserved — binding as WZ_AiStarCube"
-    $name = "WZ_AiStarCube"
+    Write-Warn "Repo folder name '$name' is reserved — binding as WZ_AiStarCube_win"
+    $name = "WZ_AiStarCube_win"
   }
-  # Unified semantics with open-project.ps1: the row we BIND gets an explicit
-  # 3rd agent column (first available of grok/kimi/codex/deepseek). Rows we did not
+  # Unified semantics: the row we BIND gets an explicit 3rd agent column (first
+  # dynamically discovered peer). Rows we did not
   # touch keep whatever they had (legacy 2-column rows stay 2-column).
   $bindAgent = ""
-  foreach ($a in @('grok', 'kimi', 'codex', 'deepseek')) {
-    if (Resolve-AgentExe $a) { $bindAgent = $a; break }
-  }
+  $detectedAgents = @(Get-DetectedAgents)
+  if ($detectedAgents.Count -gt 0) { $bindAgent = [string]$detectedAgents[0].Id }
   $roots = Join-Path $WbDst "desk-roots.tsv"
   $map = [ordered]@{}
   $agentMap = @{}
@@ -290,7 +313,7 @@ function Bind-ThisRepo {
   if ($bindAgent) { $agentMap[$name] = $bindAgent }
   $out = @(
     "# AI STAR CUBE desk roots - project_name<TAB>absolute_path[<TAB>agent]",
-    "# Bound by Install-WZ.ps1 — optional 3rd column agent: grok / kimi / codex / deepseek (peers)"
+    "# Bound by Install-WZ.ps1 — optional 3rd column is any discovered Agent route id"
   )
   foreach ($k in ($map.Keys | Sort-Object)) {
     if ($agentMap.Contains($k)) {
@@ -299,8 +322,7 @@ function Bind-ThisRepo {
       $out += ($k + "`t" + $map[$k])
     }
   }
-  $utf8 = New-Object System.Text.UTF8Encoding $false
-  [System.IO.File]::WriteAllLines($roots, $out, $utf8)
+  Write-WzUtf8LinesAtomic -Path $roots -Lines $out
 
   $marker = Join-Path $RepoRoot ".wz-project"
   $ml = @(
@@ -309,18 +331,28 @@ function Bind-ThisRepo {
     "path=$RepoRoot",
     ("created={0:yyyy-MM-ddTHH:mm:ssK}" -f (Get-Date))
   )
-  [System.IO.File]::WriteAllLines($marker, $ml, $utf8)
+  $markerMatches = $false
+  if (Test-Path -LiteralPath $marker -PathType Leaf) {
+    $existing = @(Get-Content -LiteralPath $marker -Encoding UTF8 -ErrorAction SilentlyContinue)
+    $markerMatches = ($existing -contains ('name=' + $name)) -and ($existing -contains ('path=' + $RepoRoot))
+  }
+  if (-not $markerMatches) { Write-WzUtf8LinesAtomic -Path $marker -Lines $ml }
   Write-Ok "TASK $name -> $RepoRoot"
   Write-Ok "marker $marker"
 }
 
 # ---- main ----
 Write-Host ""
-Write-Host "  WZ_AiStarCube / AI STAR CUBE installer" -ForegroundColor White
+Write-Host "  WZ_AiStarCube_win / AI STAR CUBE installer" -ForegroundColor White
 Write-Host "  Repo: $RepoRoot" -ForegroundColor DarkGray
 
+if (-not (Test-WindowsHost)) {
+  Write-Bad 'Unsupported platform. WZ_AiStarCube_win is a pure Windows project.'
+  exit 1
+}
+
 if (-not (Test-Path -LiteralPath $Src)) {
-  throw "Missing live-workbench/ — re-clone https://github.com/larkinlai666-cmd/WZ_AiStarCube"
+  throw "Missing live-workbench/ — re-clone https://github.com/larkinlai666-cmd/WZ_AiStarCube_win"
 }
 
 if ($ProjectsRoot) {

@@ -279,21 +279,26 @@ function M.open_as_workbench(window, pane, path)
 
   -- D-004: F6 launches the task's default agent (desk-roots 3rd column).
   -- M-1: the resolved agent CLI must actually exist (no dead-tab spawn).
-  local agent = desk.agent_for_path(path) or "grok"
+  local agent = desk.agent_for_path(path)
+  if not agent or not launch.has_agent(agent) then
+    local available = launch.installed_agents(true)
+    agent = available[1]
+  end
   if not launch.has_agent(agent) then
     toast(
       window,
       "AI 对话桌",
-      "未找到 " .. agent .. " CLI — 请在 desk-roots 第三列改绑已安装 agent（grok/kimi/codex/deepseek）",
+      "未找到可用 Agent CLI — 请安装自描述 Agent 或修正 desk-roots 第三列",
       5000
     )
     return
   end
   local ai_args = launch.agent_args(agent, path)
-  local title_suffix = ""
-  if agent ~= "grok" then
-    title_suffix = " | " .. launch.agent_label(agent)
+  if not ai_args then
+    toast(window, "AI 对话桌", "Agent inventory changed — reopen Init or retry", 4500)
+    return
   end
+  local title_suffix = " | " .. launch.agent_label(agent)
 
   local mux_window = window:mux_window()
   local tab, main = mux_window:spawn_tab({

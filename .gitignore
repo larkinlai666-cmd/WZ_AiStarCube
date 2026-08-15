@@ -2,30 +2,33 @@
 .DS_Store
 Thumbs.db
 *.tmp
+*.tmp.*
 *.bak
+*.pyc
 ~$*
 .idea/
 .vscode/
+__pycache__/
 exports/
 tmp/
 local-assets/
 
-# Machine-local project marker (path is personal)
+# Per-machine project identity and workbench state
 .wz-project
-
-# Never commit personal desk bindings from a real machine copy
 **/desk-roots.tsv
 **/favorites.txt
-live-workbench/workbench/desk-roots.tsv
-live-workbench/workbench/favorites.txt
+live-workbench/workbench/recent-parents.tsv
+live-workbench/workbench/agent-registry.local.tsv
+live-workbench/workbench/tabtitle-debug.log
 
 # Large binary assets stay external unless the project explicitly adopts Git LFS
 *.mp4
 *.mov
 *.zip
 
-# Accidental nested clone of this repo (never commit)
+# Accidental nested clones of this repository
 /WZ_AiStarCube/
+/WZ_AiStarCube_win/
 
 # Hardening smoke generated outputs (tooling scripts stay tracked)
 prototypes/**/__pycache__/

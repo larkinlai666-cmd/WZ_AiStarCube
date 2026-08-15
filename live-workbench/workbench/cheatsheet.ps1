@@ -1,5 +1,5 @@
 ﻿# AI STAR CUBE cheatsheet pane (F8 / Leader+h)
-# Keep this file ASCII-safe in structure; body text loads from cheatsheet.txt (UTF-8).
+# F1 help pane. Body text loads from cheatsheet.txt (UTF-8).
 
 $ErrorActionPreference = "SilentlyContinue"
 
@@ -31,7 +31,7 @@ if (Test-Path -LiteralPath $sheet) {
 }
 
 Write-Host ""
-Write-Host "  [q] close panel   [F4] close pane   [F8] or Alt+z h toggle" -ForegroundColor DarkCyan
+Write-Host "  [q] close panel   [F4] close pane   [F1] toggle" -ForegroundColor DarkCyan
 Write-Host ""
 
 while ($true) {

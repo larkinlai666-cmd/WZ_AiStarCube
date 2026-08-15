@@ -2,27 +2,6 @@
 #   notepad $PROFILE
 #   then:  . "$env:USERPROFILE\.config\wezterm\workbench\profile-snippet.ps1"
 
-# Ensure agent CLIs are on PATH (grok + kimi; codex is usually a WinGet shim already on PATH)
-$grokBin = Join-Path $env:USERPROFILE ".grok\bin"
-$kimiBin = Join-Path $env:USERPROFILE ".kimi-code\bin"
-foreach ($agentBin in @($grokBin, $kimiBin)) {
-  if (Test-Path $agentBin) {
-    if (-not ($env:Path -split ';' | Where-Object { $_ -ieq $agentBin })) {
-      $env:Path = "$agentBin;$env:Path"
-    }
-  }
-}
-
-# Agent completions (if present)
-foreach ($agentComp in @(
-    (Join-Path $env:USERPROFILE ".grok\completions\powershell\grok.ps1"),
-    (Join-Path $env:USERPROFILE ".kimi-code\completions\powershell\kimi.ps1")
-  )) {
-  if (Test-Path $agentComp) {
-    . $agentComp
-  }
-}
-
 # Quick jumps
 function wb {
   <#
@@ -30,38 +9,29 @@ function wb {
   #>
   param(
     [Parameter(Position = 0)]
-    [ValidateSet('grok', 'kimi', 'codex', 'doctor', 'home', 'config', 'help')]
+    [ValidateSet('doctor', 'home', 'config', 'help')]
     [string]$Cmd = 'help'
   )
   switch ($Cmd) {
-    'grok'   { & (Join-Path $grokBin 'grok.exe') }
-    'kimi'   { & (Join-Path $kimiBin 'kimi.exe') }
-    'codex'  { codex }
     'doctor' {
-      # Per-agent health check: run whatever each installed CLI offers
-      $checked = $false
-      $grokExe = Join-Path $grokBin 'grok.exe'
-      if (Test-Path $grokExe) { Write-Host '== grok ==' -ForegroundColor Cyan; & $grokExe doctor; $checked = $true }
-      $kimiExe = Join-Path $kimiBin 'kimi.exe'
-      if (Test-Path $kimiExe) { Write-Host '== kimi ==' -ForegroundColor Cyan; & $kimiExe --version; $checked = $true }
-      if (Get-Command codex -ErrorAction SilentlyContinue) { Write-Host '== codex ==' -ForegroundColor Cyan; codex --version; $checked = $true }
-      if (-not $checked) { Write-Host 'no agent CLI found (grok/kimi/codex/deepseek)' -ForegroundColor DarkCyan }
+      $wbDir = Join-Path $env:USERPROFILE '.config\wezterm\workbench'
+      $discovery = Join-Path $wbDir 'agent-discovery.ps1'
+      $agents = if (Test-Path -LiteralPath $discovery) { @(& $discovery -WorkbenchDir $wbDir) } else { @() }
+      if ($agents.Count -eq 0) { Write-Host 'no self-described or locally registered Agent CLI found' -ForegroundColor DarkCyan }
+      else { $agents | Format-Table Id, Label, Exe, Source -AutoSize }
     }
     'home'   { Set-Location $env:USERPROFILE }
     'config' { Set-Location (Join-Path $env:USERPROFILE '.config\wezterm') }
     default {
       Write-Host @"
 AI STAR CUBE shell helpers
-  wb grok     Start Grok
-  wb kimi     Start Kimi
-  wb codex    Start Codex
-  wb doctor   Health check for each installed agent
+  wb doctor   List every dynamically discovered Agent CLI
   wb config   Jump to WezTerm config dir
   wb home     Jump to home
 
 WezTerm (window-local keys only when focused)
-  F7 explorer · F9 projects · F4 close pane · F6 desk · F8 help
-  Leader = Alt+z then lowercase (e/x/a/p/…); Ctrl+; left for the AI agent
+  F1 help · F3 new project · F4 close pane · F5 reload · F6 desk · F7 explorer
+  No Leader layer; F2 and Ctrl+; are left for the AI agent
   Pane focus: mouse click
 "@ -ForegroundColor Cyan
     }

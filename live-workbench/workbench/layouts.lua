@@ -22,14 +22,14 @@ local function gate_spawn(window, cwd_path, agent, title)
     toast(window, title, "无可靠项目路径 — 先在 Init 面板选定任务（或按 c 创建）", 4500)
     return false
   end
-  agent = agent or "grok"
+  agent = agent or ""
   if not launch.has_agent(agent) then
     toast(
       window,
       title,
       "未找到 "
         .. agent
-        .. " CLI — 请在 desk-roots 第三列改绑已安装 agent（grok/kimi/codex/deepseek）或安装它",
+        .. " CLI — 请在 desk-roots 第三列改绑当前已探测到的 agent，或重新安装它",
       5000
     )
     return false
@@ -59,20 +59,16 @@ local function monitor_cmd(ws, root)
 end
 
 --- Fresh 3-pane desk (recommended)
---- D-004: main pane runs the task's agent (desk-roots 3rd column), grok 兜底
+--- D-004: main pane runs the task's agent (desk-roots 3rd column), with the
+--- first dynamically discovered peer as the neutral default.
 --- D-008: agent 平权 — F6 展开前必须先出现「全量已装 agent」选择，
 --- 默认项 = D-005 路由结果排第一；Esc 取消 = 零 spawn。
 --- 单一已装 agent 时跳过选择器直接启动（无选择必要）。
 
---- Installed peer agents, stable order grok/kimi/codex/deepseek (same set as Init 面板).
+--- Same open inventory as Init. Refresh on every F6 action so a newly installed
+--- or locally registered agent appears without a product-specific code change.
 local function installed_agents()
-  local out = {}
-  for _, id in ipairs({ "grok", "kimi", "codex", "deepseek" }) do
-    if launch.has_agent(id) then
-      table.insert(out, id)
-    end
-  end
-  return out
+  return launch.installed_agents(true)
 end
 
 --- D-008 agent equality picker: every installed agent is an equal option;
@@ -82,7 +78,7 @@ end
 local function pick_agent(window, pane, cwd_path, title, on_pick)
   local installed = installed_agents()
   if #installed == 0 then
-    toast(window, title, "未检测到任何已装 agent CLI（grok/kimi/codex/deepseek）— 请先安装", 5000)
+    toast(window, title, "未检测到自描述或本地注册的 agent CLI — 请先安装", 5000)
     return
   end
   -- default = D-005 routing; must be installed, else first installed peer
@@ -130,10 +126,21 @@ local function pick_agent(window, pane, cwd_path, title, on_pick)
 end
 
 local function spawn_workbench_fresh(window, cwd_path, agent)
+  -- Re-check immediately before spawn. The executable can disappear between
+  -- discovery/picker render and confirmation; never turn that race into a
+  -- plain shell or an orphan tab.
+  if not gate_spawn(window, cwd_path, agent, "AI 对话桌") then
+    return false
+  end
+  local agent_argv = launch.agent_args(agent, cwd_path)
+  if not agent_argv then
+    toast(window, "AI 对话桌", "Agent CLI changed after discovery — press F6 to refresh", 4500)
+    return false
+  end
   local mux_window = window:mux_window()
 
   local tab, main = mux_window:spawn_tab({
-    args = launch.agent_args(agent, cwd_path),
+    args = agent_argv,
     cwd = cwd_path,
   })
 
@@ -160,10 +167,7 @@ local function spawn_workbench_fresh(window, cwd_path, agent)
 
   main:activate()
   if tab then
-    local title = "✦ " .. pname
-    if agent and agent ~= "grok" then
-      title = title .. " | " .. launch.agent_label(agent)
-    end
+    local title = "✦ " .. pname .. " | " .. launch.agent_label(agent)
     tab:set_title(title)
     if not desk.bind_tab(tab, cwd_path, main) then
       desk.set_tab_desk(window, main, cwd_path)
@@ -182,6 +186,7 @@ local function spawn_workbench_fresh(window, cwd_path, agent)
       .. desk.short_path(cwd_path, 42)
       .. " · F7 绑同 PATH"
   )
+  return true
 end
 
 function M.open_workbench_fresh(window, pane)
@@ -205,6 +210,16 @@ end
 function M.open_workbench(window, pane)
   local ws, root = desk.ensure(window, pane)
   local cwd_path = root
+  -- Resolve and gate before any split. A rejected/unbound request must be a
+  -- true zero-spawn operation, not a half-created shell layout.
+  local agent = desk.agent_for_path(cwd_path)
+  if not agent or not launch.has_agent(agent) then
+    local available = launch.installed_agents(true)
+    agent = available[1]
+  end
+  if not gate_spawn(window, cwd_path, agent, "In-place desk") then
+    return
+  end
   desk.set_tab_desk(window, pane, cwd_path)
 
   local shell = pane:split({
@@ -223,30 +238,11 @@ function M.open_workbench(window, pane)
     })
   end
 
-  -- D-004: start the task's agent in the desk root.
-  -- kimi has no --cwd (identity = process cwd → Set-Location is enough);
-  -- codex takes its cwd from the shell; grok keeps explicit --cwd.
-  -- H-1/M-1: never inject an AI session identity on a weak/unbound path,
-  -- and never inject a CLI that is not installed (dead red error in-shell).
-  local agent = desk.agent_for_path(cwd_path) or "grok"
   local ai_cmd = nil
-  if not desk.is_strong_path(cwd_path) then
-    pane:activate()
-    toast(window, "In-place desk", "无可靠项目路径 — 未注入 AI 命令（R1）", 4500)
-    return
-  end
   local esc = cwd_path:gsub("'", "''")
-  if launch.has_agent(agent) then
-    if agent == "kimi" then
-      ai_cmd = "kimi"
-    elseif agent == "codex" then
-      ai_cmd = "codex"
-    elseif agent == "deepseek" then
-      -- kimi pattern: no --cwd flag; process cwd (Set-Location) is identity
-      ai_cmd = "deepseek"
-    else
-      ai_cmd = "& '" .. launch.grok_exe:gsub("'", "''") .. "' --cwd '" .. esc .. "'"
-    end
+  local exe = launch.resolve_agent_exe(agent)
+  if exe then
+    ai_cmd = "& '" .. tostring(exe):gsub("'", "''") .. "'"
   end
 
   pane:activate()
@@ -254,7 +250,7 @@ function M.open_workbench(window, pane)
     toast(
       window,
       "In-place desk",
-      "DESK " .. desk.short_path(cwd_path, 40) .. " · 未找到 " .. agent .. " CLI，未注入 AI 命令",
+      "DESK " .. desk.short_path(cwd_path, 40) .. " · 未找到可用 Agent CLI，未注入 AI 命令",
       4500
     )
     return
@@ -274,31 +270,41 @@ function M.open_dual_ai(window, pane)
 
   -- D-004: left = task's agent (desk-roots 3rd column), right = 对照 agent
   -- H-1/M-1: gates BEFORE spawn; 对照 agent 也必须真实存在，否则右栏是废窗格
-  local agent = desk.agent_for_path(cwd_path) or "grok"
+  local agent = desk.agent_for_path(cwd_path)
+  if not agent or not launch.has_agent(agent) then
+    local available = launch.installed_agents(true)
+    agent = available[1]
+  end
   if not gate_spawn(window, cwd_path, agent, "Dual AI") then
     return
   end
   local peer = nil
-  for _, cand in ipairs({ "kimi", "codex", "deepseek", "grok" }) do
+  for _, cand in ipairs(launch.installed_agents(false)) do
     if cand ~= agent and launch.has_agent(cand) then
       peer = cand
       break
     end
   end
   if not peer then
-    toast(window, "Dual AI", "没有可用的对照 agent — 再装一个 CLI（grok/kimi/codex/deepseek）", 5000)
+    toast(window, "Dual AI", "没有可用的对照 agent — 再安装或注册一个 Agent CLI", 5000)
+    return
+  end
+  local left_args = launch.agent_args(agent, cwd_path)
+  local right_args = launch.agent_args(peer, cwd_path)
+  if not left_args or not right_args then
+    toast(window, "Dual AI", "Agent inventory changed — retry to refresh", 4500)
     return
   end
 
   local tab, left = mux_window:spawn_tab({
-    args = launch.agent_args(agent, cwd_path),
+    args = left_args,
     cwd = cwd_path,
   })
 
   left:split({
     direction = "Right",
     size = 0.5,
-    args = launch.agent_args(peer, cwd_path),
+    args = right_args,
     cwd = cwd_path,
   })
 
@@ -320,14 +326,23 @@ function M.open_review(window, pane)
 
   -- D-004: main pane = task's agent (desk-roots 3rd column)
   -- H-1/M-1: gates BEFORE spawn (also fixes nil-root gsub crash below)
-  local agent = desk.agent_for_path(cwd_path) or "grok"
+  local agent = desk.agent_for_path(cwd_path)
+  if not agent or not launch.has_agent(agent) then
+    local available = launch.installed_agents(true)
+    agent = available[1]
+  end
   if not gate_spawn(window, cwd_path, agent, "Review") then
+    return
+  end
+  local agent_args = launch.agent_args(agent, cwd_path)
+  if not agent_args then
+    toast(window, "Review", "Agent inventory changed — retry to refresh", 4500)
     return
   end
   local esc = cwd_path:gsub("'", "''")
 
   local tab, main = mux_window:spawn_tab({
-    args = launch.agent_args(agent, cwd_path),
+    args = agent_args,
     cwd = cwd_path,
   })
 
@@ -352,40 +367,6 @@ function M.open_review(window, pane)
     tab:set_title("检 " .. desk.basename(cwd_path))
   end
   toast(window, "Review · 新页签", "WS:" .. ws)
-end
-
---- Single-agent focus tab. D-004: all agents share this path.
---- H-1/M-1: R1 + availability gates BEFORE spawn (was: grok-only check).
-local function open_focus_agent(window, pane, agent, icon)
-  local _, root = desk.ensure(window, pane)
-  agent = agent or "grok"
-  if not gate_spawn(window, root, agent, launch.agent_label(agent) .. " · 新页签") then
-    return
-  end
-  local mux_window = window:mux_window()
-  local tab, main = mux_window:spawn_tab({
-    args = launch.agent_args(agent, root),
-    cwd = root,
-  })
-  if tab then
-    tab:set_title(icon .. " " .. desk.basename(root))
-  end
-  if main then
-    main:activate()
-  end
-  toast(window, launch.agent_label(agent) .. " · 新页签", "DESK " .. desk.short_path(root, 40), 2500)
-end
-
-function M.open_focus_grok(window, pane)
-  open_focus_agent(window, pane, "grok", "✦")
-end
-
-function M.open_focus_kimi(window, pane)
-  open_focus_agent(window, pane, "kimi", "◆")
-end
-
-function M.open_focus_codex(window, pane)
-  open_focus_agent(window, pane, "codex", "◎")
 end
 
 return M

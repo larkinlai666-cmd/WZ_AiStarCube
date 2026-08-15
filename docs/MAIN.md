@@ -2,7 +2,7 @@
 
 ## Product one-liner
 
-**WZ-AiWorkBench**：以 WezTerm 为壳的 **AI STAR CUBE 个人 AI 工作台** 产品线。先把本机工作台做到彻底合用，再封装为可复用的 Agent Skill / 多 skill 与其它工程逻辑（名称统一归属 **WZ-AiWorkBench**）。
+**WZ-AiWorkBench**：以 WezTerm 为壳的 **AI STAR CUBE 个人 AI 工作台** 产品线。公开仓库名为 **WZ_AiStarCube_win**，是纯 Windows 平台项目；macOS、Linux 与 WSL 宿主不在支持范围内。先把本机工作台做到彻底合用，再封装为可复用的 Agent Skill / 多 skill 与其它工程逻辑。
 
 ## Relation to PPS（重要）
 
@@ -43,11 +43,11 @@
 ## Target users
 
 - 首要：作者本人（本机 WezTerm 工作台）
-- 其次（封装阶段）：以 WezTerm 为 AI 主壳、并行 Grok/Codex 的个人用户
+- 其次（封装阶段）：在 Windows 上以 WezTerm 为 AI 主壳、并行使用任意可发现 Agent CLI 的个人用户
 
 ## Live workbench (implementation truth today)
 
-Source of runtime behavior: `%USERPROFILE%\.config\wezterm\`（**不在本 git 树内**，F-002）。
+Source snapshot: 本仓 `live-workbench/`；installed runtime: `%USERPROFILE%\.config\wezterm\`。发布前两者必须通过哈希同步校验。
 
 ```
 %USERPROFILE%\.config\wezterm\
@@ -95,7 +95,11 @@ Binding table on machine: `workbench\desk-roots.tsv`. Marker: `<project>\.wz-pro
 
 任务 = desk-roots 绑定（名 + 冻结路径），不属于任何模型/CLI。某模型的会话只是任务的一次运行时实例。任何 agent CLI 在冻结路径上启动即视为在该任务上工作。门禁 R1–R6 与模型无关，逐字保留。
 
-#### 2 · Agent 注册表（可扩展）
+#### 2 · Agent 开放探测与可选续聊适配器（D-016）
+
+候选列表**不写死产品类型**。每次 Init 冷启动（或面板内 `r`）由 `agent-discovery.ps1` 重新枚举：PATH 可见的 npm/Python 包元数据、可执行文件版本元数据、`*.wz-agent.json` 自描述文件，以及安装器永久保留的 `agent-registry.local.tsv`。探测过程不执行候选程序；任何新产品只要安装包声明自己是 AI/coding agent 并导出 CLI，就自动进入 Init/F3/F6。完全没有元数据的独立二进制，可在本地 TSV 写 `id<TAB>label<TAB>command-or-absolute-path`（第三列支持 `|` 分隔别名），同样无需改源码。仓库自带 `agent-registry.tsv` 只有协议说明，不带产品白名单。
+
+下表只记录已有的**续聊参数适配器**，不是发现清单；没有专属适配器的新 Agent 仍可等权展示并以项目 cwd 正常新开：
 
 | Agent | 启动方式 | 同模型续接手 | 备注 |
 |---|---|---|---|
@@ -136,11 +140,12 @@ HUD/接管检测：按窗格前台进程名识别 agent（grok / kimi / codex / 
 
 #### 5 · 启动槽位泛化
 
-- `open-project.ps1 -Agent <grok|kimi|codex|deepseek>`：grok 用 `--cwd`，codex 用 `-C`，kimi/deepseek 用 spawn 进程 cwd。
-- `desk-roots.tsv` 可选第三列 `agent`；写出方一律显式写第三列（含 grok），读取方容忍两列旧行（D-005）。
-- **缺省解析（D-005）**：显式指定（第三列 / `-Agent` / 向导选择）> 本机已安装 agent 按 grok→kimi→codex→deepseek 取第一个；任何单一 agent 缺失不阻断其它 agent 的完整使用。
-- Init 新建向导 `c` 冻结 name+path 不变，追加一步选默认 agent（可回车取默认，默认跟随所选 CLI）。
+- `open-project.ps1 -Agent <任意探测到的 route id>`；默认以 spawn 的项目 cwd 作为任务身份，产品专属 resume 仅由可选适配器追加。
+- `desk-roots.tsv` 可选第三列 `agent`；新建向导选择 AI 时显式写入该动态 route id，读取方容忍两列旧行。
+- **缺省解析（D-005，由 D-016 泛化）**：显式指定（第三列 / `-Agent` / 向导选择）> 当前开放探测结果第一项（稳定按 label/id 排序）；不存在任何产品优先级或未知类型回退。
+- Init 新建向导 `c` 为四步：名称 → 位置 → **Agent / CLI 单一选择** → 确认。所选 AI CLI 同时写入 `desk-roots.tsv` 第三列，禁止再产生「启动 CLI 与默认 agent 不同」的组合；`PowerShell only` 使用明确的 `shell` route id，不得偷偷回退成 grok（D-015）。
 - **启动与 agent 解耦（核心理念，2026-08-13 定稿；D-009 行输入 + D-010 组合加速）**：同屏两区两步——Init 常驻「2 AGENT」区列出本机已装 agent；第 1 步 `wz>` 输任务号（`n<num>`=强制新会话），第 2 步 `agent>` 输模型号后启动；无第二屏、无行展开，选择动作本身不跳过。**两步文法同构**：数字+Enter = 选 / Enter 空 = 默认（D-005 解析）/ q = 返回（第 2 步取消零 spawn）。**屏幕静态**——只在状态转换时重绘一次，键入过程零重绘；序号两区同款 `[ n]` 芯片同缩进；亮黄=当前激活步骤的可输入索引（D-013 预留色，阶段高亮保留），非激活步骤暗灰，另由 `<< step N` 标记指示。**组合加速道（D-010）**：默认视图封顶 9 行，两位数 `<任务><agent>` 一次直启（`n<组合>` 强制新会话），门禁照常；`a` 全量视图组合失效、数字回退行号。
+- COMMAND 操作区采用三列固定单元格，三行的第 2/3 个入口始终从同一终端列开始，不再被前项文案长度推移；二级操作仅 `a/r/q`。历史 Grok 专属 `d` Dashboard 与 launch menu 项均删除，启动菜单只保留 Init、PowerShell、CMD（D-016）。
 - 顶栏/HUD 在项目名旁显示当前页签 agent。
 
 #### 6 · 并发纪律
@@ -149,8 +154,8 @@ HUD/接管检测：按窗格前台进程名识别 agent（grok / kimi / codex / 
 
 #### 7 · 实施切片（状态）
 
-1. ✅ live：`open-project.ps1 -Agent` + `desk.lua`/`projects.lua`/`sidebar.ps1` 读可选第三列 `agent`（缺省 grok，写出方全部保留该列）+ `status.lua` HUD agent 槽（进程名识别，kimi/codex 回退第三列）；
-2. ✅ live：Init 向导 `c` 现为 5 步（名 → 位置 → CLI → **默认 agent** → 确认），`bootstrap.ps1` CLI 注册表加入 kimi；
+1. ✅ live：`open-project.ps1 -Agent` + `desk.lua`/`projects.lua`/`sidebar.ps1` 读可选第三列动态 route id；未绑定时采用开放探测第一项；`status.lua` 显示当前 agent；
+2. ✅ live：Init 向导 `c` 现为 4 步（名 → 位置 → **Agent / CLI** → 确认）；同一选择同时决定启动程序与默认 agent；Init/F3/F6 共用无产品白名单的开放探测器；
 3. ✅ 本仓：`live-workbench/` 快照逐文件 diff 同步、`desk-roots.example.tsv` 三列表头、README/cheatsheet 回写；
 4. ⚠️ 部分：脚本化交接演练已过（`prototypes/handoff-smoke/`：交接文件 → 基线 Verify FAIL → 接手完成 → Verify PASS → 回写 handoff）；**交互部分待用户 live 冒烟**：Ctrl+F5 后 F6 在 kimi 任务上开 kimi 页签、向导选 agent、open-project `-Agent kimi`。
 5. ✅ 平权去 grok 耦合（2026-08-10，D-005）：F6/续聊/布局族按 agent 路由（修掉 F6 写死 grok、resume 只支持 grok 两个核心断点）；Init 面板 codex 会话枚举 + 三路路由 + `Start-CodexTab`（`Read-CodexSessionSummaries`，冒烟 `smoke-codex-sessions.ps1` ALL PASS）；sidebar `Start-AgentHere` 三路 + R1 门禁；profile/cheatsheet/README/INSTALL 平权措辞；`Install-WZ` Doctor 改为 ≥1 已装 agent 即通过；`open-project` 缺省解析按 D-005、`-Continue`/`-Prompt` 三路映射；load guard 正则泛化防 false pass。交互冒烟待用户。
@@ -163,7 +168,7 @@ D-004 已定案；切片落地期间 Grok 默认行为不变（agent 列缺省 =
 |----|------|
 | **R-UI-1** | 信息分区舒展：身份摘要 / 主选项列表 / 次要动作 / 输入行 之间用空行与分隔线隔开，禁止全部挤在一角。 |
 | **R-UI-2** | **灰色（Gray / DarkGray）只用于静态说明**（章节标题、提示、不可点的元信息）。**禁止**把有效选项画成灰色。 |
-| **R-UI-3** | 一切可点选项（含 `[b] back`、`[q] cancel`、`[0]`/`[9]`、数字项）必须用 **White / Yellow / Cyan** 等高对比色。 |
+| **R-UI-3** | 一切可点选项（含 `[b] back`、`[q] cancel`、`[0]`、数字项）必须用 **White / Yellow / Cyan** 等高对比色。新建位置的手输父目录入口仅为 `[0]`，不得保留 `[9]` 别名（D-015）。 |
 | **R-UI-4** | **无意义的超链接禁止可点**：向导里 CLI 的 `.exe/.cmd/.ps1` 只显示文件名；终端默认 **单击不打开链接**，需 **Ctrl+单击**（或中键）才打开有意义的 `file://` / URL。误点导致错误 cwd / trust 提示视为缺陷。 |
 | **R-UI-5** | F3 **新建向导**（`-WizardOnly`）：`q` 取消或流程正常结束后 **自动关闭该标签**，不得留下空 `PS>` 要求用户再 F4。 |
 
@@ -181,13 +186,13 @@ D-004 已定案；切片落地期间 Grok 默认行为不变（agent 列缺省 =
 | F6 | 三栏 AI 桌：先弹**全量已装 agent 平权选择器**（默认 = desk-roots 第三列路由排第一，↑↓+Enter 确认，Esc 取消零 spawn；单一已装 agent 自动跳过；未绑定页签只弹 toast） |
 | F7 | Left Explorer（绑当前页签 DESK） |
 
-**无 Leader 层（D-007，2026-08-13 用户决定退役）**；F8–F12 刻意不绑；F2、`Ctrl+;` 归 agent CLI；键仅 WezTerm 聚焦生效。面板本地键（c/n/s/d/r/a/q/数字）承担一切非全局动作。
+**无 Leader 层（D-007，2026-08-13 用户决定退役）**；F8–F12 刻意不绑；F2、`Ctrl+;` 归 agent CLI；键仅 WezTerm 聚焦生效。面板本地键（c/n/s/r/a/q/数字）承担一切非全局动作；无任何产品专属键。
 
 ### Session cwd (F-005) + create freeze (F-008)
 
-Grok 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。应用 `--cwd` 或 `open-project.ps1`（优先 `wezterm cli spawn` / `--new-tab`，禁止裸 `Start-Process grok` 叠 OS 窗）。
+Agent 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。`open-project.ps1` 优先使用 `wezterm cli spawn` / `--new-tab`，禁止裸启 Agent 形成叠加的独立 OS 窗口。
 
-新建任务：Init 面板按 `c` → 项目名 → 冻结路径（默认 `G:\GrokProject\<name>`）→ 写 `desk-roots` + `.wz-project` → 仅用该 PATH 开 Grok。避免「会话户籍在 home、内容却写项目」的散落。
+新建任务：Init 面板按 `c` → 项目名 → 冻结路径 → 单一 Agent/CLI 选择 → 确认；随后写 `desk-roots` + `.wz-project`，并只用该 PATH 启动所选 Agent。位置页手填父目录只保留 `[0]`。
 
 ### Workbench UX fixed / in progress
 
@@ -199,7 +204,8 @@ Grok 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。应用 `--cwd
 | 任务初始化面板 | **冷启动+新标签统一** | `default_prog`/Ctrl+Shift+T → `bootstrap.ps1` 表格；纯 Shell=Init 面板按 `s`（或 launch menu 的 PowerShell 项）；分屏仍 PS；`no-bootstrap` 可关 |
 | Init 面板卡顿 | **已改 live** | 原为每次按键全量重扫 grok/kimi/codex 会话目录；现行缓存 + 脏标记（`$script:RowsDirty`），仅 `r`/ `a`/ 动作后重建，j/k/数字/Enter 纯渲染缓存行 |
 | Init 列表 Act\*/排序 | **已下线/已改** | Act\* 列与整条 marks 管线（缓存+后台刷新器+空闲轮询）已**整体拆除**（用户 2026-08-13：优化不出效果，干掉）；列表改为 `# DateTime Tag Project Path Model Title`，Path 列头部保留、超长尾端 `~` 截断；bound 层按最近活跃倒序 |
-| Init 启动与 agent 解耦 | **已改 live（同屏两区两步 + D-009 静态屏行输入）** | **核心理念**：两步选择确认但不换屏——本机已装 agent 常驻「2 AGENT」区（grok/kimi/codex/deepseek 按安装出现）；`wz>` 输任务号（或 `n<号>` 强制新会话）待命 AGENT 区，`agent>` 输模型号 / Enter=默认（D-005 解析）/ q 取消零 spawn，随后启动（resume/new 逐 agent 标注）；R1–R6 门禁不变。**屏幕静态**：只在状态转换时重绘一次（逐键重绘两案在 ConPTY 下均实测闪烁，已否决，D-009）。DETAIL 区块/`i` 键、独立 LAUNCH 选择屏（`Read-AgentChoice`）、面板内光标与逐键循环均已删除；grok `agent_name`（如 `grok-build-plan`）读取时归一化为 `grok`，否则续聊匹配永远落空。2026-08-14：启动屏升级——所有 agent 页签统一先播走路猫猫读条动画（约 300ms 固定窗，`Get-AgentSplashScript`，向导 `c` 链路同享），agent 首帧自行覆盖；动画播完统一清屏（deepseek 是行式 REPL 无全屏 TUI，防猫条残留）。配色标准 D-013：亮黄=唯一可输入色（选项索引芯片 + 行输入提示符前缀 `wz>`/`agent …`/`explorer>`，全局通用设计）并全局预留——框框/表头/状态行/装饰一律禁黄；信息=Cyan/White/Gray、错误=Red、成功=Green、装饰=Magenta |
+| Init 启动与 agent 解耦 | **已改 live（同屏两区两步 + 开放探测）** | 本机通过元数据/manifest/本地兜底注册探测到的全部 Agent 常驻「2 AGENT」区，不设产品白名单；冷启动必重扫，`r` 可在原进程重扫。`wz>` 选任务 → `agent>` 选 Agent，取消零 spawn；R1–R6 不变。COMMAND 采用三列固定单元格，`c/s/q` 等后续入口纵向对齐；Grok 专属 Dashboard 已从面板和启动菜单清除。屏幕仅在状态转换时重绘；亮黄仍只代表可输入项（D-013）。 |
+| 读取/启动进度语义 | **D-017 已加固** | 文件与会话读取先枚举一次并共享一个全局计数轴，完成合并和发布后才到 100%；外部 Agent 就绪时长不可知，启动阶段改用不定进度动画，不显示虚假百分比。 |
 
 ### Known residual pain (workbench backlog seeds)
 
@@ -253,7 +259,7 @@ Grok 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。应用 `--cwd
 |---|---|---|
 | A1 | Init 任务表 | 冷启动 / 新标签出现 Init 表；TASK 来自 desk-roots，home 不在正式 TASK |
 | A2 | SYS 拒开聊 | 弱路径不得以正式项目身份开任何 agent：Init SYS 行拒 Enter；未绑定页签 F6 只弹 toast 不开页签；sidebar 在 home 按 `b`/`g` 被拒 |
-| A3 | 新建冻结 | Init `c` 五步（名→位置→CLI→默认 agent→确认）：一次写目录 + desk-roots（显式三列）+ `.wz-project`；agent 仅以该路径为启动 cwd |
+| A3 | 新建冻结 | Init `c` 四步（名→位置→Agent/CLI→确认）：一次写目录 + desk-roots（AI 选择显式三列）+ `.wz-project`；所选 CLI 与默认 agent 必须同一身份，位置手输入口仅 `[0]`；agent 仅以该路径为启动 cwd |
 | A4 | 路径槽 | 左状态栏路径槽 = 当前页签 DESK（强路径），与 agent 顶栏 cwd 一致 |
 | A5 | 项目名 | 页签/列表「项目名」= desk-roots 绑定名，**不是**会话标题 / cwd leaf |
 
@@ -264,7 +270,7 @@ Grok 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。应用 `--cwd
 | B1 | F6 三栏 | 在绑定的强路径任务上 F6 → 先出**全量已装 agent 平权选择器**（默认 = 第三列路由排第一，↑↓+Enter），确认后开「agent + Shell + 监视」三栏；Esc 取消零 spawn；未绑定页签只弹 toast |
 | B2 | F7 同根 | 先点 AI 窗格再 F7 → Explorer 根 = 页签 DESK / agent 启动 cwd |
 | B3 | F1 速查 | cheatsheet 面板开/关（F1 被 Windows 吞时面板内 q 可关） |
-| B4 | Init 两步流（静态屏 + 组合加速） | `wz>` 输任务号（或 `n<号>` 新会话；两位数 `<任务><agent>` 一次直启，默认视图 ≤9 行）→ 2 AGENT 区待命 → `agent>` 输模型号 / Enter=默认 / q 取消零 spawn；序号 `[ n]` 芯片两区同制式同色系（亮黄=可输入索引（D-013 预留色））；屏幕只在状态转换时重绘一次，键入零重绘、无闪烁 |
+| B4 | Init 两步流（静态屏 + 组合加速） | `wz>` 输任务号（或 `n<号>` 新会话；两位数 `<任务><agent>` 一次直启，默认视图 ≤9 行）→ 2 AGENT 区待命 → `agent>` 输模型号 / Enter=默认 / q 取消零 spawn；AGENT 区等权展示全部开放探测结果；COMMAND 三列固定对齐且无产品专属 `d`；屏幕只在状态转换时重绘一次 |
 | B5 | 重载 | F5（或 Ctrl+Shift+R）toast「配置已重载」 |
 | B6 | 不抢 agent | F2、`Ctrl+;` 仍归 agent CLI；工作台键仅 WezTerm 聚焦生效；**无 Leader 层** |
 
@@ -273,7 +279,7 @@ Grok 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。应用 `--cwd
 | # | 项 | 通过标准 |
 |---|---|---|
 | C1 | open-project | `open-project.ps1` 用 wezterm spawn 页签，不叠独立 OS 窗 |
-| C2 | Doctor | `Install-WZ.ps1 -DoctorOnly` 全绿（≥1 个已装 agent 即通过） |
+| C2 | Doctor | `Install-WZ.ps1 -DoctorOnly` 与 Init 使用同一开放探测器；≥1 个自描述/本地注册 Agent 即通过 |
 | C3 | 纯 Shell 逃生 | Init 面板按 `s` 可得不走任务流的纯 PowerShell 页签 |
 | C4 | 快照同步 | 改门禁/键位后 `live-workbench/` 与 `~\.config\wezterm` 无关键契约漂移（md5 一致 + BOM 断言过验证器） |
 
@@ -283,7 +289,7 @@ Grok 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。应用 `--cwd
 - 笔记本 Fn 层、IME 抢键需用户环境自理
 - codex 本机未安装，其路径仅经静态/脚本化验证（D-006 已拉平门禁级硬化）
 - M-3：open-project.ps1 可移植性残留（硬编码安装目录 + cli 文本解析），留后续包
-- macOS/Linux 非一等支持
+- macOS/Linux/WSL 宿主明确不支持；这是纯 Windows 项目边界，不是待补兼容项
 
 ### Packaging phase (later)
 

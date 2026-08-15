@@ -4,33 +4,31 @@
 
 - Methods: M-001, M-002, M-003
 - Facts: F-001, F-002, F-003, F-005, F-006, F-007, F-008, F-009, F-010, F-011, F-012, F-013, F-014
-- Decisions: D-001, D-002, D-003, D-004, D-005, D-006, D-007, D-008, D-009, D-010, D-011, D-012, D-013, D-014
+- Decisions: D-001, D-002, D-003, D-004, D-005, D-006, D-007, D-008, D-009, D-010, D-011, D-012, D-013, D-014, D-015, D-016, D-017
 - Sources: none
 - Assets: none
 - Components: C-ROOT, C-WB, C-REF-WEZ, C-SKILL, C-LAUNCH
 - Read: PROJECT_STATE.md,CONTEXT.md,DECISIONS.md,docs/MAIN.md,docs/refs/wezterm-local.md
-- Write: PROJECT_STATE.md,CONTEXT.md,DECISIONS.md,docs/MAIN.md,README.md,live-workbench
+- Write: PROJECT_STATE.md,CONTEXT.md,DECISIONS.md,PROJECT_MAP.md,docs,README.md,INSTALL.md,Install-WZ.ps1,open-project.ps1,.gitignore,live-workbench,scripts,prototypes/hardening-smoke
 - Verify: powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1
 - Excluded: none
 - Coverage: CONTEXT.md
-
 ## Current Package
 
 - ID: PKG-001
-- Goal: Acceptance checklist ready; Leader Alt+z aligned; skill deferred.
-- Output anchor: `docs/MAIN.md` + live `~\.config\wezterm\workbench\*`
-- Allowed change: Live UX/docs sync; authority; open-project; installer docs.
+- Goal: Distill and publish the Windows-only workbench under lightweight, stable, high-performance, Agent-equal constraints.
+- Output anchor: hardened repo snapshot + live `~\.config\wezterm\workbench\*` + renamed GitHub repository.
+- Allowed change: Runtime, discovery, launch, installer, open-project, verification, Windows-only packaging/docs, authority and publish metadata.
 - Forbidden change: PPS product import; shipping skill now.
 
 ## Pending Feedback
 
 - 批准/修订 MAIN 验收清单（P-006，已按现行设计重写）→ 升格 D 后逐项 live 打勾（含 A1–C4 冒烟：新标签 Init 两步流、未绑定页签 F6 只弹 toast）.
-
 ## Proposals
 
 - P-006: MAIN acceptance checklist — user approve as D.
-- P-004/P-005: PKG-002 residual UX after checklist; freeze `skills/wz-skill/` until packaging.
 - P-011: 加固审查 R2 — 已施工全量并回归绿（M2-1~6 + L2-1/2/3/5/7/9；L2-4/6/8 留观察），待用户 live 终验.
+- D-017 is active: adversarial distillation, Windows-only rename and remote publication are approved work, not pending feedback.
 
 ## Working Assumptions
 
@@ -73,7 +71,9 @@
 | D-012 | live `bootstrap.ps1` Complete-AgentPick 成功即关 + `status.lua` argv 钉住 + cheatsheet | Present |
 | D-013 | live `bootstrap.ps1` Write-UiChoice/Write-BoxKeyRow 结构强制 + `sidebar.ps1` 配色归位 + DECISIONS D-013 | Present |
 | D-014 | live `options.lua` 单击开链接绑定 + `sidebar.ps1` launcher 护栏 + DECISIONS D-014 | Present |
+| D-015 | MAIN 新建向导四步契约 + live `bootstrap.ps1` Agent/CLI 单选与仅 `[0]` 父目录入口 + DECISIONS D-015 | Present |
+| D-016 | MAIN 开放探测/固定 COMMAND 网格契约 + live `agent-discovery.ps1`/Init/F3/F6/installer/sidebar/open-project + 无 Grok Dashboard | Present |
+| D-017 | Windows-only 四原则蒸馏 + 真实读取进度/不定启动动画 + 对抗回归 + `_win` 发布边界 | Present |
 
 ## Next Action
-
-P-011 已施工并推送（b488faa）；D-014 单击开链接恢复 + launcher 护栏已落地并推送。User: wezterm 完全重开后终验——① 侧栏单击文件名/目录名直接打开（.cmd/.exe 行为纯文本，用 `o N` 键盘开）；② 拖拽选择文字不受影响；③ 启动菜单四入口。随后 F6 三栏形态定夺（A/B/C）→ 批准验收清单（P-006 → D）→ 逐项打勾。M-3 留后续包。
+D-017 代码加固与自动回归进行中；完成本机安装同步、真配置加载和哈希验收后，提交并推送，再把 GitHub 仓库重命名为 `WZ_AiStarCube_win` 并复验新地址。

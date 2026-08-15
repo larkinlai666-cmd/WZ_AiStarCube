@@ -17,7 +17,19 @@ try {
 } catch {}
 
 $script:RootsFile = Join-Path $env:USERPROFILE '.config\wezterm\workbench\desk-roots.tsv'
+$script:AgentDiscoveryFile = Join-Path (Split-Path -Parent $script:RootsFile) 'agent-discovery.ps1'
+$script:DetectedAgents = $null
 $script:Workspace = if ([string]::IsNullOrWhiteSpace($Workspace)) { 'home' } else { $Workspace }
+
+function Get-DetectedAgents {
+  if ($null -ne $script:DetectedAgents) { return @($script:DetectedAgents) }
+  $out = @()
+  if (Test-Path -LiteralPath $script:AgentDiscoveryFile -PathType Leaf) {
+    try { $out = @(& $script:AgentDiscoveryFile -WorkbenchDir (Split-Path -Parent $script:AgentDiscoveryFile)) } catch {}
+  }
+  $script:DetectedAgents = @($out)
+  return @($script:DetectedAgents)
+}
 
 function Resolve-SafePath {
   param([string]$PathValue)
@@ -64,6 +76,85 @@ function Read-DeskRootFromFile {
   return $null
 }
 
+function Normalize-PathKey {
+  param([string]$PathValue)
+  if ([string]::IsNullOrWhiteSpace($PathValue)) { return '' }
+  try {
+    $full = [System.IO.Path]::GetFullPath($PathValue)
+    return $full.TrimEnd('\').ToLowerInvariant()
+  } catch {
+    return $PathValue.Trim().TrimEnd('\').ToLowerInvariant()
+  }
+}
+
+# R2/R5 open policy: hidden profile/tool names are rejected by rule rather
+# than by a fixed Agent product list.
+$script:ReservedNames = @(
+  'home', 'desktop', 'documents', 'downloads', 'pictures', 'music', 'videos',
+  'my documents', 'administrator', 'users', 'temp', 'tmp', 'appdata',
+  'windows', 'system32', 'config', 'wezterm', 'onedrive'
+)
+
+function Test-ReservedName {
+  param([string]$Name)
+  if ([string]::IsNullOrWhiteSpace($Name)) { return $true }
+  $n = $Name.Trim().ToLowerInvariant()
+  if ($n.StartsWith('.')) { return $true }
+  return ($script:ReservedNames -contains $n)
+}
+
+function Test-WeakPath {
+  param([string]$Cwd)
+  if ([string]::IsNullOrWhiteSpace($Cwd)) { return $true }
+  if ($Cwd -match '^\\+[a-zA-Z]:') { return $true }
+  $c = Normalize-PathKey $Cwd
+  $homeKey = Normalize-PathKey $env:USERPROFILE
+  if ($c -eq $homeKey) { return $true }
+  $exact = @('Desktop','Documents','Downloads','Pictures','Music','Videos','OneDrive','.config') |
+    ForEach-Object { Normalize-PathKey (Join-Path $env:USERPROFILE $_) }
+  if ($exact -contains $c) { return $true }
+  if ($c -eq ($homeKey + '\appdata') -or $c.StartsWith($homeKey + '\appdata\')) { return $true }
+  if ($homeKey -and $c.StartsWith($homeKey + '\.')) { return $true }
+  if ($c -match '\\windows\\(system32|syswow64|temp)(\\|$)') { return $true }
+  if ($c -match '^[a-z]:$') { return $true }
+  return $false
+}
+
+function Commit-WzAtomicFile {
+  param([string]$TemporaryPath, [string]$Destination)
+  $backup = $Destination + '.swap.' + $PID + '.' + [guid]::NewGuid().ToString('N')
+  try {
+    if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+      [System.IO.File]::Replace($TemporaryPath, $Destination, $backup, $true)
+    } else {
+      [System.IO.File]::Move($TemporaryPath, $Destination)
+    }
+  } finally {
+    if ((Test-Path -LiteralPath $backup -PathType Leaf) -and -not (Test-Path -LiteralPath $Destination -PathType Leaf)) {
+      [System.IO.File]::Move($backup, $Destination)
+    }
+    if (Test-Path -LiteralPath $backup -PathType Leaf) {
+      Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
+function Write-WzUtf8LinesAtomic {
+  param([string]$Path, [string[]]$Lines)
+  $dir = Split-Path -Parent $Path
+  if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+  }
+  $tmp = Join-Path $dir ((Split-Path -Leaf $Path) + '.tmp.' + $PID + '.' + [guid]::NewGuid().ToString('N'))
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  try {
+    [System.IO.File]::WriteAllLines($tmp, $Lines, $utf8)
+    Commit-WzAtomicFile -TemporaryPath $tmp -Destination $Path
+  } finally {
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+  }
+}
+
 function Write-DeskRootToFile {
   param([string]$Ws, [string]$PathValue)
   # H-2 / R5: this writer is a hard gate too (was the side door around
@@ -92,27 +183,27 @@ function Write-DeskRootToFile {
     }
   }
   $map[$Ws] = $PathValue
+  if (-not $agentMap.Contains($Ws)) {
+    $available = @(Get-DetectedAgents)
+    if ($available.Count -gt 0) { $agentMap[$Ws] = [string]$available[0].Id }
+  }
   $out = @(
     '# AI STAR CUBE desk roots — workspace_name<TAB>absolute_path[<TAB>agent]',
     '# 任务工作区名 与 任务根目录 的绑定；Explorer / 状态栏 / F6 共用',
-    '# 第三列 agent 显式写出（含 grok 缺省）: grok / kimi / codex (D-004/D-005)'
+    '# 第三列 route id 来自开放式 Agent 探测；未绑定时保留两列'
   )
   foreach ($k in ($map.Keys | Sort-Object)) {
     # R2/R5 parity with desk.lua write_map: rewrite drops weak/reserved rows
     if (Test-ReservedName -Name $k) { continue }
     if (Test-WeakPath -Cwd $map[$k]) { continue }
-    # D-005: ALWAYS write the 3rd column explicitly (grok included) —
-    # dropping it let the row drift to first-installed agent after uninstall.
-    $a = 'grok'
+    $a = ''
     if ($agentMap.Contains($k) -and [string]$agentMap[$k]) {
       $a = ([string]$agentMap[$k]).Trim().ToLowerInvariant()
     }
-    $out += ($k + "`t" + $map[$k] + "`t" + $a)
+    if ($a) { $out += ($k + "`t" + $map[$k] + "`t" + $a) }
+    else { $out += ($k + "`t" + $map[$k]) }
   }
-  # L-3: atomic temp+move — never truncate the bindings file in place
-  $tmp = $script:RootsFile + '.tmp'
-  Set-Content -LiteralPath $tmp -Value $out -Encoding UTF8
-  Move-Item -LiteralPath $tmp -Destination $script:RootsFile -Force
+  Write-WzUtf8LinesAtomic -Path $script:RootsFile -Lines $out
   return $true
 }
 
@@ -256,17 +347,6 @@ function Open-DefaultApp {
       Write-Host ("  open failed: {0}" -f $_) -ForegroundColor Red
       return $false
     }
-  }
-}
-
-function Normalize-PathKey {
-  param([string]$PathValue)
-  if ([string]::IsNullOrWhiteSpace($PathValue)) { return '' }
-  try {
-    $full = [System.IO.Path]::GetFullPath($PathValue)
-    return $full.TrimEnd('\').ToLowerInvariant()
-  } catch {
-    return $PathValue.Trim().TrimEnd('\').ToLowerInvariant()
   }
 }
 
@@ -827,18 +907,20 @@ function Add-Favorite {
   if (-not (Test-Path $dir)) {
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
   }
-  if (-not (Test-Path $fav)) {
-    $header = @(
-      '# AI STAR CUBE favorites - one full path per line',
-      '# Lines starting with # are ignored'
-    )
-    Set-Content -Path $fav -Value $header -Encoding UTF8
+  $existing = if (Test-Path -LiteralPath $fav -PathType Leaf) {
+    @(Get-Content -LiteralPath $fav -Encoding UTF8 -ErrorAction SilentlyContinue)
+  } else {
+    @('# AI STAR CUBE favorites - one full path per line', '# Lines starting with # are ignored')
   }
-  $existing = @(Get-Content -LiteralPath $fav -ErrorAction SilentlyContinue)
-  if ($existing -contains $script:Cwd) {
+  $cwdKey = Normalize-PathKey $script:Cwd
+  $already = $false
+  foreach ($line in $existing) {
+    if ((Normalize-PathKey ([string]$line)) -eq $cwdKey) { $already = $true; break }
+  }
+  if ($already) {
     Write-Host ("  already favorited: {0}" -f $script:Cwd) -ForegroundColor DarkCyan
   } else {
-    Add-Content -LiteralPath $fav -Value $script:Cwd -Encoding UTF8
+    Write-WzUtf8LinesAtomic -Path $fav -Lines @($existing + $script:Cwd)
     Write-Host '  saved to favorites.txt' -ForegroundColor Magenta
     Write-Host ("  {0}" -f $script:Cwd) -ForegroundColor Gray
   }
@@ -854,7 +936,7 @@ function Get-EntryByIndex {
 }
 
 function Get-AgentForWorkspace {
-  # D-004: optional 3rd TAB column (agent) in desk-roots.tsv; default grok
+  # Optional 3rd TAB column is any discovered route id; no product whitelist.
   param([string]$Ws)
   if (Test-Path -LiteralPath $script:RootsFile) {
     foreach ($line in Get-Content -LiteralPath $script:RootsFile -ErrorAction SilentlyContinue) {
@@ -864,70 +946,25 @@ function Get-AgentForWorkspace {
       if ($parts.Count -lt 2) { $parts = $t -split '\s+', 2 }
       if ($parts.Count -ge 3 -and $parts[0] -eq $Ws -and $parts[2].Trim()) {
         $a = $parts[2].Trim().ToLowerInvariant()
-        if ($a -eq 'grok' -or $a -eq 'kimi' -or $a -eq 'codex') { return $a }
+        return $a
       }
     }
   }
-  return 'grok'
+  $available = @(Get-DetectedAgents)
+  if ($available.Count -gt 0) { return [string]$available[0].Id }
+  return $null
 }
 
 function Find-AgentExe {
-  # D-004: grok / kimi / codex -> exe path or $null (PATH first, then known install dirs)
   param([string]$Id)
-  $cmd = Get-Command $Id -ErrorAction SilentlyContinue
-  if ($cmd -and $cmd.Source -and (Test-Path -LiteralPath $cmd.Source)) { return [string]$cmd.Source }
-  $candidates = @()
-  if ($Id -eq 'grok') { $candidates += (Join-Path $env:USERPROFILE '.grok\bin\grok.exe') }
-  if ($Id -eq 'kimi') { $candidates += (Join-Path $env:USERPROFILE '.kimi-code\bin\kimi.exe') }
-  foreach ($c in $candidates) {
-    if (Test-Path -LiteralPath $c) { return $c }
+  foreach ($agent in @(Get-DetectedAgents)) {
+    if (([string]$agent.Id).ToLowerInvariant() -eq ([string]$Id).ToLowerInvariant()) { return [string]$agent.Exe }
   }
   return $null
 }
 
-# R5 reserved binding names — keep in sync with desk.lua RESERVED_NAMES (L-2)
-$script:ReservedNames = @(
-  'home', 'desktop', 'documents', 'downloads', 'my documents', 'administrator',
-  'users', 'temp', 'tmp', 'appdata', 'windows', 'system32', 'config',
-  '.config', 'wezterm', '.grok', '.kimi', '.kimi-code', '.codex'
-)
-
-function Test-ReservedName {
-  # R5 gate: reserved names are never project bindings (desk.lua parity)
-  param([string]$Name)
-  if ([string]::IsNullOrWhiteSpace($Name)) { return $true }
-  return ($script:ReservedNames -contains $Name.Trim().ToLowerInvariant())
-}
-
-function Test-WeakPath {
-  # R2/R5 gate: weak/system paths never get an AI session identity or a
-  # desk-roots binding. Keep in sync with desk.lua M.is_weak_path (L-2).
-  param([string]$Cwd)
-  if ([string]::IsNullOrWhiteSpace($Cwd)) { return $true }
-  if ($Cwd -match '^\\+[a-zA-Z]:') { return $true }  # malformed \\C: leftovers
-  $c = Normalize-PathKey $Cwd
-  $homeKey = Normalize-PathKey $env:USERPROFILE
-  if ($c -eq $homeKey) { return $true }
-  $exact = @(
-    'Desktop', 'Documents', 'Downloads', 'Pictures', 'Music', 'Videos', 'OneDrive',
-    '.config', '.config\wezterm',
-    '.grok', '.grok\bin', '.grok\sessions',
-    '.kimi', '.kimi\bin', '.kimi\sessions',
-    '.kimi-code', '.kimi-code\bin', '.kimi-code\sessions',
-    '.codex', '.codex\bin', '.codex\sessions'
-  ) | ForEach-Object { Normalize-PathKey (Join-Path $env:USERPROFILE $_) }
-  if ($exact -contains $c) { return $true }
-  # whole AppData tree (incl. AppData itself — desk.lua prefix parity)
-  if ($c.StartsWith($homeKey + '\appdata')) { return $true }
-  if ($c -match '\\windows\\(system32|syswow64)') { return $true }
-  if ($c -match '\\appdata\\local\\temp' -or $c -match '\\windows\\temp') { return $true }
-  if ($c -match '^[a-z]:$') { return $true }
-  return $false
-}
-
 function Start-AgentHere {
-  # D-004: route by desk-roots agent binding (default grok); if that exe is missing,
-  # fall back to the first available agent in order grok > kimi > codex.
+  # Route by desk-roots; if absent/uninstalled use the first open-discovery result.
   param([string]$WorkDir, [string]$Label)
   # R1: refuse weak/system paths as AI session identity
   if (Test-WeakPath -Cwd $WorkDir) {
@@ -939,32 +976,24 @@ function Start-AgentHere {
   $agent = Get-AgentForWorkspace -Ws $script:Workspace
   $exe = Find-AgentExe -Id $agent
   if (-not $exe) {
-    foreach ($cand in @('grok', 'kimi', 'codex')) {
-      $exe = Find-AgentExe -Id $cand
-      if ($exe) { $agent = $cand; break }
-    }
+    $available = @(Get-DetectedAgents)
+    if ($available.Count -gt 0) { $agent = [string]$available[0].Id; $exe = [string]$available[0].Exe }
   }
   if (-not $exe) {
-    Write-Host '  no agent CLI found (grok/kimi/codex)' -ForegroundColor Red
+    Write-Host '  no self-described or locally registered Agent CLI found' -ForegroundColor Red
     Start-Sleep -Seconds 1
     return
   }
-  $agentTitle = switch ($agent) { 'grok' { 'Grok' } 'kimi' { 'Kimi' } 'codex' { 'Codex' } default { $agent } }
-  # grok = --cwd flag; kimi = process cwd IS identity (no --cwd);
-  # codex = WinGet .cmd shim -> launch via PowerShell host (direct spawn freezes)
-  if ($agent -eq 'codex') {
-    $cwdEsc = $WorkDir.Replace("'", "''")
-    $psCmd = @"
+  $agentDef = @(Get-DetectedAgents | Where-Object { $_.Id -eq $agent } | Select-Object -First 1)
+  $agentTitle = if ($agentDef.Count -gt 0) { [string]$agentDef[0].Label } else { $agent }
+  # Generic PowerShell host safely launches .exe/.cmd/.ps1 shims alike.
+  $cwdEsc = $WorkDir.Replace("'", "''")
+  $exeEsc = $exe.Replace("'", "''")
+  $psCmd = @"
 Set-Location -LiteralPath '$cwdEsc'
-try { & codex -C '$cwdEsc' } catch { Write-Host `$_.Exception.Message -ForegroundColor Red }
+try { & '$exeEsc' } catch { Write-Host `$_.Exception.Message -ForegroundColor Red }
 "@
-    $progArgs = @('powershell.exe', '-NoLogo', '-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', $psCmd)
-  } elseif ($agent -eq 'grok') {
-    # Always pass --cwd so TUI top bar == DESK/VIEW (F-005)
-    $progArgs = @($exe, '--cwd', $WorkDir)
-  } else {
-    $progArgs = @($exe)
-  }
+  $progArgs = @('powershell.exe', '-NoLogo', '-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', $psCmd)
   $ok = Invoke-WezSpawn -WorkDir $WorkDir -ProgArgs $progArgs
   if ($ok) {
     Write-Host ("  OK: {0} @ {1}" -f $agentTitle, $Label) -ForegroundColor Green
@@ -974,9 +1003,7 @@ try { & codex -C '$cwdEsc' } catch { Write-Host `$_.Exception.Message -Foregroun
     Write-DeskRootToFile -Ws $script:Workspace -PathValue $script:Desk
   } else {
     Set-Location -LiteralPath $WorkDir
-    if ($agent -eq 'grok') { & $exe --cwd $WorkDir }
-    elseif ($agent -eq 'codex') { & codex -C $WorkDir }
-    else { & $exe }
+    & $exe
   }
   Start-Sleep -Seconds 1.0
 }

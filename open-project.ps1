@@ -6,31 +6,80 @@
 #   powershell -ExecutionPolicy Bypass -File .\open-project.ps1
 #   powershell -ExecutionPolicy Bypass -File .\open-project.ps1 -Prompt "continue WZ"
 #   powershell -ExecutionPolicy Bypass -File .\open-project.ps1 -Continue
-#   powershell -ExecutionPolicy Bypass -File .\open-project.ps1 -Agent kimi [-Continue]
+#   powershell -ExecutionPolicy Bypass -File .\open-project.ps1 -Agent any-route-id
 
 [CmdletBinding()]
 param(
     [string]$Prompt = "",
     [switch]$NewWindow,
-    # Resume most recent session for this project
-    # (grok -c / kimi --continue / codex resume --last / deepseek --continue)
+    # Resume is only applied by launch adapters that explicitly support it.
     [switch]$Continue,
-    # Open Grok Agent Dashboard instead of a chat (grok only)
-    [switch]$Dashboard,
-    # D-004: which agent CLI to launch. Empty (default) = desk-roots 3rd column
-    # for this project, else first installed of grok/kimi/codex/deepseek.
-    # grok = --cwd flag; kimi/codex/deepseek = process cwd via wezterm spawn
-    # (kimi/deepseek have no --cwd; codex has -C but the workbench uses process
-    # cwd uniformly).
-    [ValidateSet('', 'grok', 'kimi', 'codex', 'deepseek')]
+    # Any id returned by the open Agent discovery helper.
     [string]$Agent = ''
 )
 
 $ErrorActionPreference = "Stop"
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+    throw 'open-project.ps1 supports Windows only.'
+}
 # Always this clone's root — never a machine-specific hardcoded path
 $ProjectRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
-if ([string]::IsNullOrWhiteSpace($ProjectRoot) -or -not (Test-Path -LiteralPath $ProjectRoot)) {
+if ([string]::IsNullOrWhiteSpace($ProjectRoot) -or -not (Test-Path -LiteralPath $ProjectRoot -PathType Container)) {
     throw "open-project.ps1: cannot resolve project root from PSScriptRoot=$PSScriptRoot"
+}
+
+function Normalize-WzPathKey([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    return $Path.Trim().Replace('/', '\').TrimEnd('\').ToLowerInvariant()
+}
+
+function Test-WzWeakPath([string]$Path) {
+    $key = Normalize-WzPathKey $Path
+    $homeKey = Normalize-WzPathKey $env:USERPROFILE
+    if (-not $key -or $key -eq $homeKey -or $key -match '^[a-z]:$') { return $true }
+    $weakExact = @('Desktop','Documents','Downloads','Pictures','Music','Videos','OneDrive','.config') |
+        ForEach-Object { Normalize-WzPathKey (Join-Path $env:USERPROFILE $_) }
+    if ($weakExact -contains $key) { return $true }
+    $appDataKey = Normalize-WzPathKey (Join-Path $env:USERPROFILE 'AppData')
+    if ($key -eq $appDataKey -or $key.StartsWith($appDataKey + '\')) { return $true }
+    if ($homeKey -and $key.StartsWith($homeKey + '\.')) { return $true }
+    if ($key -match '\\windows\\(system32|syswow64|temp)(\\|$)') { return $true }
+    return $false
+}
+
+function Commit-WzAtomicFile {
+    param([string]$TemporaryPath, [string]$Destination)
+    $backup = $Destination + '.swap.' + $PID + '.' + [guid]::NewGuid().ToString('N')
+    try {
+        if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+            [System.IO.File]::Replace($TemporaryPath, $Destination, $backup, $true)
+        } else {
+            [System.IO.File]::Move($TemporaryPath, $Destination)
+        }
+    } finally {
+        if ((Test-Path -LiteralPath $backup -PathType Leaf) -and -not (Test-Path -LiteralPath $Destination -PathType Leaf)) {
+            [System.IO.File]::Move($backup, $Destination)
+        }
+        if (Test-Path -LiteralPath $backup -PathType Leaf) {
+            Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Write-WzUtf8LinesAtomic {
+    param([string]$Path, [string[]]$Lines)
+    $dir = Split-Path -Parent $Path
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $tmp = Join-Path $dir ((Split-Path -Leaf $Path) + '.tmp.' + $PID + '.' + [guid]::NewGuid().ToString('N'))
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    try {
+        [System.IO.File]::WriteAllLines($tmp, $Lines, $utf8)
+        Commit-WzAtomicFile -TemporaryPath $tmp -Destination $Path
+    } finally {
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
 }
 
 # Freeze project identity: name + path (desk-roots + .wz-project)
@@ -46,20 +95,14 @@ function Update-DeskRootBinding {
     if ([string]::IsNullOrWhiteSpace($ProjectName)) {
         $ProjectName = Split-Path -Leaf $RootPath
     }
-    $reserved = @('home','desktop','documents','downloads','administrator','users','temp','appdata','windows')
-    if ($reserved -contains $ProjectName.ToLowerInvariant()) {
-        Write-Host "REFUSE: reserved project name '$ProjectName'" -ForegroundColor Red
-        return
+    $reserved = @('home','desktop','documents','downloads','pictures','music','videos','administrator','users','temp','tmp','appdata','windows','system32','config','.config','wezterm','onedrive')
+    if ($ProjectName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$' -or
+        $ProjectName -match '^(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$' -or
+        $reserved -contains $ProjectName.ToLowerInvariant()) {
+        throw "REFUSE: invalid or reserved project name '$ProjectName'"
     }
-    $weakExact = @(
-        $env:USERPROFILE,
-        (Join-Path $env:USERPROFILE 'Desktop'),
-        (Join-Path $env:USERPROFILE 'Documents'),
-        (Join-Path $env:USERPROFILE 'Downloads')
-    ) | ForEach-Object { $_.TrimEnd('\').ToLowerInvariant() }
-    if ($weakExact -contains $RootPath.TrimEnd('\').ToLowerInvariant()) {
-        Write-Host "REFUSE: weak/system path cannot be project root: $RootPath" -ForegroundColor Red
-        return
+    if (Test-WzWeakPath $RootPath) {
+        throw "REFUSE: weak/system path cannot be project root: $RootPath"
     }
     $dir = Split-Path $rootsFile -Parent
     if (-not (Test-Path -LiteralPath $dir)) {
@@ -99,7 +142,7 @@ function Update-DeskRootBinding {
         "# AI STAR CUBE desk roots — project_name<TAB>absolute_path[<TAB>agent]",
         "# 项目名(绑定名) 与 项目路径 写死绑定；Explorer / 状态栏 / F6 / Init 共用",
         "# 弱路径(home/Desktop/…)与保留名不得写入",
-        "# 可选第三列 agent: grok / kimi / codex / deepseek (D-004，四者平权；绑定时显式写入)"
+        "# 可选第三列 agent: 任意开放探测得到的 route id（绑定时显式写入）"
     )
     foreach ($k in ($map.Keys | Sort-Object)) {
         # Unified semantics with Install-WZ.ps1: rows with a recorded agent get
@@ -111,7 +154,7 @@ function Update-DeskRootBinding {
             $out += ($k + "`t" + $map[$k])
         }
     }
-    Set-Content -LiteralPath $rootsFile -Value $out -Encoding UTF8
+    Write-WzUtf8LinesAtomic -Path $rootsFile -Lines $out
     # freeze on disk
     $marker = Join-Path $RootPath ".wz-project"
     $markerLines = @(
@@ -120,45 +163,34 @@ function Update-DeskRootBinding {
         "path=$RootPath",
         ("created={0:yyyy-MM-ddTHH:mm:ssK}" -f (Get-Date))
     )
-    $utf8 = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllLines($marker, $markerLines, $utf8)
+    $markerMatches = $false
+    if (Test-Path -LiteralPath $marker -PathType Leaf) {
+        $existing = @(Get-Content -LiteralPath $marker -Encoding UTF8 -ErrorAction SilentlyContinue)
+        $markerMatches = ($existing -contains ('name=' + $ProjectName)) -and ($existing -contains ('path=' + $RootPath))
+    }
+    if (-not $markerMatches) { Write-WzUtf8LinesAtomic -Path $marker -Lines $markerLines }
     Write-Host "PROJECT bind: $ProjectName -> $RootPath"
     Write-Host "marker: $marker"
 }
-# Resolve an agent CLI executable: PATH first, then well-known install dirs.
-# codex is usually a WinGet .cmd shim — spawning a shim as argv0 can freeze,
-# so the launcher below routes non-.exe shims through a PowerShell host.
-function Resolve-AgentExe([string]$Name) {
-    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-    if ($cmd -and $cmd.Source -and (Test-Path -LiteralPath $cmd.Source)) { return $cmd.Source }
-    $candidates = @()
-    switch ($Name) {
-        'grok' { $candidates = @(
-            (Join-Path $env:USERPROFILE ".grok\bin\grok.exe"),
-            (Join-Path $env:LOCALAPPDATA "Programs\grok\grok.exe")) }
-        'kimi' { $candidates = @(
-            (Join-Path $env:USERPROFILE ".kimi-code\bin\kimi.exe"),
-            (Join-Path $env:USERPROFILE ".kimi-code\bin\kimi.cmd")) }
-        'codex' { $candidates = @(
-            (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links\codex.exe"),
-            (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links\codex.cmd")) }
-        'deepseek' { $candidates = @(
-            (Join-Path $env:APPDATA "npm\deepseek.cmd"),
-            (Join-Path $env:APPDATA "npm\deepseek.exe")) }
+function Get-DetectedAgents {
+    $root = Join-Path $env:USERPROFILE '.config\wezterm\workbench'
+    $helper = Join-Path $root 'agent-discovery.ps1'
+    if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+        $root = Join-Path $PSScriptRoot 'live-workbench\workbench'
+        $helper = Join-Path $root 'agent-discovery.ps1'
     }
-    foreach ($c in $candidates) {
-        if ($c -and (Test-Path -LiteralPath $c)) { return $c }
-    }
-    return $null
+    if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) { return @() }
+    return @(& $helper -WorkbenchDir $root)
 }
 
 $bindName = Split-Path -Leaf $ProjectRoot
-if ([string]::IsNullOrWhiteSpace($bindName)) { $bindName = "WZ_AiStarCube" }
+if ([string]::IsNullOrWhiteSpace($bindName)) { $bindName = "WZ_AiStarCube_win" }
 
-# Resolve the effective agent (D-004 — grok/kimi/codex are peers):
+# Resolve the effective agent from the open inventory:
 #   1. explicit -Agent
 #   2. desk-roots.tsv 3rd column for this project
-#   3. first installed of grok / kimi / codex (grok NOT required)
+#   3. first dynamically discovered Agent
+$detectedAgents = @(Get-DetectedAgents)
 $rootsFile = Join-Path $env:USERPROFILE ".config\wezterm\workbench\desk-roots.tsv"
 if (-not $Agent) {
     if (Test-Path -LiteralPath $rootsFile) {
@@ -174,19 +206,19 @@ if (-not $Agent) {
     }
 }
 if (-not $Agent) {
-    foreach ($a in @('grok', 'kimi', 'codex', 'deepseek')) {
-        if (Resolve-AgentExe $a) { $Agent = $a; break }
-    }
+    if ($detectedAgents.Count -gt 0) { $Agent = [string]$detectedAgents[0].Id }
 }
 if (-not $Agent) {
-    throw "open-project.ps1: no agent CLI found. Install at least one of grok / kimi / codex / deepseek."
+    throw "open-project.ps1: no self-described or locally registered Agent CLI found."
 }
-if ($Agent -notin @('grok', 'kimi', 'codex', 'deepseek')) {
-    throw "open-project.ps1: unknown agent '$Agent' (expected grok/kimi/codex/deepseek) — fix the 3rd column in $rootsFile"
+$Agent = $Agent.Trim().ToLowerInvariant()
+if ($Agent -notmatch '^[a-z0-9][a-z0-9_-]{0,63}$') {
+    throw "open-project.ps1: invalid Agent route id '$Agent'."
 }
-$agentExe = Resolve-AgentExe $Agent
+$agentDef = @($detectedAgents | Where-Object { $_.Id -eq $Agent } | Select-Object -First 1)
+$agentExe = if ($agentDef.Count -gt 0) { [string]$agentDef[0].Exe } else { $null }
 if (-not $agentExe) {
-    throw "$Agent CLI not found. Install it, pass -Agent with an installed agent (grok/kimi/codex/deepseek), or fix the 3rd column in $rootsFile."
+    throw "$Agent CLI not found in the open inventory. Reinstall it, add metadata/local registration, or fix the 3rd column in $rootsFile."
 }
 
 # Unified semantics with Install-WZ.ps1: the bound row gets an EXPLICIT 3rd
@@ -205,82 +237,18 @@ Write-Host "Project : $ProjectRoot"
 Write-Host ("Agent   : {0} ({1})" -f $Agent, $agentExe)
 Write-Host "WezTerm : $wez"
 
-$prog = @()
-if ($Agent -eq 'grok') {
-    $prog = @($agentExe)
-    if ($Dashboard) {
-        $prog += "dashboard"
-    } else {
-        $prog += @("--cwd", $ProjectRoot)
-        if ($Continue) {
-            $prog += "--continue"
-        }
-        if (-not [string]::IsNullOrWhiteSpace($Prompt)) {
-            $prog += $Prompt
-        }
-    }
+$cliArgs = @()
+if (-not [string]::IsNullOrWhiteSpace($Prompt)) { $cliArgs += $Prompt }
+if ($Continue) {
+    Write-Host "WARNING: generic open discovery cannot infer resume flags for '$Agent'; starting normally." -ForegroundColor DarkCyan
+}
+if ($agentExe -match '\.exe$') {
+    $prog = @($agentExe) + $cliArgs
 } else {
-    # D-004: kimi has no --cwd; codex has -C but the workbench uniformly uses
-    # process cwd — identity = process cwd set by
-    # `wezterm cli spawn --cwd <path> --` (and -WorkingDirectory fallbacks).
-    if ($Dashboard) {
-        Write-Host "WARNING: -Dashboard is grok-only; ignored for -Agent $Agent" -ForegroundColor DarkCyan
-    }
-    $cliArgs = @()
-    switch ($Agent) {
-        'kimi' {
-            if ($Continue) {
-                # Same-model handover: resume most recent session in this cwd
-                $cliArgs += "--continue"
-            }
-            if (-not [string]::IsNullOrWhiteSpace($Prompt)) {
-                # Verified via `kimi --help`: -p/--prompt runs ONE prompt
-                # non-interactively, prints the response, then exits.
-                $cliArgs += @("-p", $Prompt)
-                Write-Host "NOTE: kimi -p is one-shot non-interactive; the pane content ends when it finishes." -ForegroundColor Cyan
-            }
-        }
-        'codex' {
-            if ($Continue) {
-                # Verified via `codex resume --help`: resume --last [PROMPT]
-                # continues the most recent session (cwd-filtered).
-                $cliArgs += @("resume", "--last")
-                if (-not [string]::IsNullOrWhiteSpace($Prompt)) {
-                    $cliArgs += $Prompt
-                }
-            } elseif (-not [string]::IsNullOrWhiteSpace($Prompt)) {
-                # Verified via `codex --help`: positional [PROMPT] starts the
-                # session with that prompt.
-                $cliArgs += $Prompt
-            }
-        }
-        'deepseek' {
-            if ($Continue) {
-                # Verified via `deepseek --help` (0.5.0): --continue/--resume
-                # loads the saved session for process.cwd() before running.
-                $cliArgs += "--continue"
-            }
-            if (-not [string]::IsNullOrWhiteSpace($Prompt)) {
-                # Positional [prompt...] = one-shot (prints, exits).
-                $cliArgs += $Prompt
-                Write-Host "NOTE: deepseek positional prompt is one-shot; the pane content ends when it finishes." -ForegroundColor Cyan
-            }
-        }
-        default {
-            if ($Continue -or -not [string]::IsNullOrWhiteSpace($Prompt)) {
-                Write-Host "WARNING: -Continue/-Prompt not mapped for agent '$Agent'; ignored." -ForegroundColor DarkCyan
-            }
-        }
-    }
-    if ($agentExe -match '\.exe$') {
-        $prog = @($agentExe) + $cliArgs
-    } else {
-        # .cmd / extensionless shim cannot be argv0 of CreateProcess — go
-        # through a PowerShell host (same pattern as bootstrap.ps1 codex).
-        $cmdLine = "& '$($agentExe -replace "'", "''")'"
-        foreach ($a in $cliArgs) { $cmdLine += " '$($a -replace "'", "''")'" }
-        $prog = @("powershell.exe", "-NoLogo", "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $cmdLine)
-    }
+    # .cmd / extensionless shim cannot be argv0 of CreateProcess.
+    $cmdLine = "& '$($agentExe -replace "'", "''")'"
+    foreach ($a in $cliArgs) { $cmdLine += " '$($a -replace "'", "''")'" }
+    $prog = @("powershell.exe", "-NoLogo", "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $cmdLine)
 }
 
 function Test-WeztermGuiAlive {
@@ -291,9 +259,20 @@ if ($wez -and -not $NewWindow) {
     if (Test-WeztermGuiAlive) {
         # Inject a tab into the running GUI (window 0 if WEZTERM_PANE is unset)
         $spawnArgs = @("cli", "spawn", "--cwd", $ProjectRoot)
-        $winLine = & $wez cli list 2>$null | Select-Object -Skip 1 -First 1
-        if ($winLine -match '^\s*(\d+)\s+') {
-            $spawnArgs += @("--window-id", $Matches[1])
+        $windowId = $null
+        try {
+            $listJson = (& $wez cli list --format json 2>$null | Out-String).Trim()
+            if ($listJson) {
+                $first = @($listJson | ConvertFrom-Json | Select-Object -First 1)
+                if ($first.Count -gt 0 -and $null -ne $first[0].window_id) { $windowId = [string]$first[0].window_id }
+            }
+        } catch {}
+        if (-not $windowId) {
+            $winLine = & $wez cli list 2>$null | Select-Object -Skip 1 -First 1
+            if ($winLine -match '^\s*(\d+)\s+') { $windowId = $Matches[1] }
+        }
+        if ($windowId -match '^\d+$') {
+            $spawnArgs += @("--window-id", $windowId)
         }
         $spawnArgs += @("--")
         $spawnArgs += $prog

@@ -32,6 +32,8 @@ $harness = @(
   (Get-Block '^function Normalize-PathKey'),
   (Get-Block '^function Test-ReservedName'),
   (Get-Block '^function Test-WeakPath'),
+  (Get-Block '^function Commit-WzAtomicFile'),
+  (Get-Block '^function Write-WzUtf8LinesAtomic'),
   (Get-Block '^function Write-DeskRootToFile')
 ) -join "`r`n`r`n"
 
@@ -41,6 +43,8 @@ $harnessFile = Join-Path $scratch 'harness.ps1'
 [System.IO.File]::WriteAllText($harnessFile, $harness, (New-Object System.Text.UTF8Encoding $true))
 . $harnessFile
 $script:RootsFile = Join-Path $scratch 'desk-roots.tsv'
+$script:TestAgents = @()
+function Get-DetectedAgents { return @($script:TestAgents) }
 
 $strongA = 'G:\GrokProject\WZ_Skill'
 $strongB = 'G:\GrokProject\WZ_Skill\docs'
@@ -59,28 +63,29 @@ Check (Test-WeakPath -Cwd '\\C:\bad') 'L2: malformed leading-backslash drive is 
 Check (Test-ReservedName -Name '.kimi') 'L2: .kimi is reserved'
 Check (-not (Test-ReservedName -Name 'WZ_Skill')) 'L2: WZ_Skill not reserved'
 
-# --- H-3: explicit 3rd column incl. grok ----------------------------------
+# --- H-3: no branded default; dynamic route only when detected ------------
 $r = Write-DeskRootToFile -Ws 'alpha' -PathValue $strongA
 $row = (Get-Content -LiteralPath $script:RootsFile | Where-Object { $_ -match '^alpha\t' })
-Check ($r -eq $true -and $row -eq ("alpha`t" + $strongA + "`tgrok")) 'H3: no-agent row writes explicit grok column'
+Check ($r -eq $true -and $row -eq ("alpha`t" + $strongA)) 'H3: zero-Agent row stays unbound without a branded fallback'
 
-# seed: kimi row + legacy 2-col row + weak row, then rewrite via new binding
+# seed: arbitrary route + legacy 2-col row + weak row, then bind dynamically
 $seed = @(
   '# seeded',
-  ("kimirow`t" + $strongB + "`tkimi"),
+  ("routed`t" + $strongB + "`tquasar-route"),
   ("legacy`t" + $strongC),
   ("weakrow`t" + $env:USERPROFILE)
 )
 Set-Content -LiteralPath $script:RootsFile -Value $seed -Encoding UTF8
+$script:TestAgents = @([pscustomobject]@{ Id = 'nova-route' })
 $r = Write-DeskRootToFile -Ws 'beta' -PathValue $strongA
 $text = [System.IO.File]::ReadAllText($script:RootsFile, [System.Text.Encoding]::UTF8)
-Check ($text -match ("kimirow\t" + [regex]::Escape($strongB) + "\tkimi")) 'H3: existing kimi column preserved on rewrite'
-Check ($text -match ("legacy\t" + [regex]::Escape($strongC) + "\tgrok")) 'H3: legacy 2-col row upgraded to explicit grok'
+Check ($text -match ("routed\t" + [regex]::Escape($strongB) + "\tquasar-route")) 'H3: arbitrary existing route preserved on rewrite'
+Check ($text -match ("legacy\t" + [regex]::Escape($strongC) + '(\r?\n|$)')) 'H3: legacy 2-col row remains valid and unbranded'
 Check ($text -notmatch 'weakrow') 'R5: pre-existing weak row dropped on rewrite (desk.lua parity)'
-Check ($text -match ("beta\t" + [regex]::Escape($strongA) + "\tgrok")) 'H3: new binding written with explicit grok'
+Check ($text -match ("beta\t" + [regex]::Escape($strongA) + "\tnova-route")) 'H3: new binding uses an arbitrary detected route'
 
 # --- L-3: atomic write leaves no temp --------------------------------------
-Check (-not (Test-Path -LiteralPath ($script:RootsFile + '.tmp'))) 'L3: no .tmp left behind'
+Check (@(Get-ChildItem -LiteralPath $scratch -Filter '*.tmp.*' -File -ErrorAction SilentlyContinue).Count -eq 0) 'L3: no unique temp file left behind'
 
 Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
 if ($fails.Count -gt 0) {

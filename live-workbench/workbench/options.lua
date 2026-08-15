@@ -187,7 +187,7 @@ function M.apply(config)
   -- New tab (+ button, Ctrl+Shift+T, prefer_to_spawn_tabs) uses default_prog.
   -- Default = WZ task init panel (bootstrap.ps1), not bare PowerShell.
   -- Opt-out: create empty file workbench/no-bootstrap
-  -- Plain shell: Leader Alt+z then \   or launch menu "PowerShell"
+  -- Plain shell: Init `s` or launch menu "PowerShell"
   ------------------------------------------------------------------
   local launch = require("workbench.launch")
   config.default_prog = launch.default_prog()

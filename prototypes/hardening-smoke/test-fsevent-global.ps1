@@ -1,4 +1,4 @@
-# M-5 verification: does Register-ObjectEvent -Action share $global with the
+﻿# M-5 verification: does Register-ObjectEvent -Action share $global with the
 # main session? sidebar.ps1 auto-refresh depends on it. Run under PS 5.1.
 # Exit 0 = flag visible (mechanism works); 1 = silently dead (needs Get-Event).
 $ErrorActionPreference = 'Stop'

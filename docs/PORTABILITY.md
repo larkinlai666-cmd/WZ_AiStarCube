@@ -1,69 +1,56 @@
-# Portability / Adversarial Audit
+# Windows portability and adversarial audit
 
-**Question:** Can another user import this repo and get the **same workflow shell** as the author?
+WZ_AiStarCube_win 的可移植目标是：另一台 Windows 设备克隆并安装后，得到相同的工作台行为，而不是复制作者的私人项目、会话或账户。
 
-**Answer (after 2026-08-09 fix):** **Yes for the workbench shell** (keys, Init, gates, F6–F9, path freeze). **No for the author's private project list or chat history** (by design).
+macOS、Linux 和 WSL 宿主明确不受支持；安装器会在非 Windows 环境停止。
 
-## One-command path (required)
+## 一条命令路径
 
 ```powershell
-git clone https://github.com/larkinlai666-cmd/WZ_AiStarCube.git
-cd WZ_AiStarCube
+git clone https://github.com/larkinlai666-cmd/WZ_AiStarCube_win.git
+cd WZ_AiStarCube_win
 powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1
-# optional: custom parent for new projects
-powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1 -ProjectsRoot D:\MyProjects
 ```
 
-Then restart WezTerm.
+随后重启 WezTerm。
 
-## Audit matrix (adversarial)
+## 对抗性检查矩阵
 
-| Attack / failure mode | Before fix | After fix |
-|----------------------|------------|-----------|
-| No install script; manual copy drifts | **Fail** | `Install-WZ.ps1` copies + verifies modules |
-| `DefaultParent = G:\GrokProject` missing drive | **Fail** | env `WZ_PROJECTS_ROOT` → `*:\GrokProject` → `Documents\GrokProjects` |
-| Example desk-roots points at non-existent `G:\…` | **Fail** (fake TASK) | Install creates **empty** roots; optional bind **this clone** |
-| Overwriting user desk-roots on reinstall | Risk | Install **keeps** existing desk-roots / favorites |
-| Grok only at `~\.grok\bin\grok.exe` | Fragile | PATH + common locations (bootstrap + launch.lua + open-project) |
-| `open-project.ps1` fallback `G:\GrokProject\WZ_Skill` | **Fail** | PSScriptRoot only |
-| Personal paths in public snapshot | Risk | `.gitignore` desk-roots/favorites; examples only |
-| macOS / Linux expect same PS1 | **Out of scope** | Documented Windows-first |
-| Expect author's sessions / titles | Impossible | Transcripts stay in `~\.grok\sessions` |
-| Leader `Alt+;` dead on CN IME | Confusion | Leader is **`Alt+z`** (keys.lua) |
-| Docs say copy example as desk-roots | **Fail** | INSTALL + installer forbid that pattern |
+| 风险 | 当前防护 |
+|---|---|
+| 安装中断留下半份配置 | 同目录临时文件、SHA-256 校验、原子替换；安装前备份旧配置 |
+| 重装覆盖私人项目清单 | 保留已存在的 `desk-roots.tsv`、收藏和本地 Agent 注册表 |
+| 弱路径被绑定为正式项目 | 拒绝用户目录、常用用户文件夹、AppData、隐藏工具目录、系统/临时目录和盘符根目录 |
+| Agent 类型写死 | PATH、npm、Python、清单和本地注册表均按元数据/能力发现，不以品牌白名单筛选 |
+| 可执行路径被同名命令劫持 | 启动时使用发现记录中的准确绝对路径，并在生成窗格前再次验证 |
+| 恶意或异常元数据 | 限制 JSON/文本读取大小，清除控制字符，限制字段长度，校验 ID 和可执行文件 |
+| Agent 在选择后被卸载 | 启动前重新检查；失败时停止，不静默退回普通 shell |
+| 猫猫进度先于真实读取完成 | 全部可计数读取共享一个总量；合并并发布结果后才到 100% |
+| 外部进程时长未知 | 仅显示不定进度等待动画，不承诺百分比或虚假“完成” |
+| desk roots 写入被打断 | 新文件落盘后才切换旧文件，并保留可恢复备份 |
+| 个人数据进入仓库 | `.gitignore` 排除绑定、根目录、收藏、最近目录和本地 Agent 注册表 |
 
-## What “same workflow” means
+## 可移植与不可移植内容
 
-| Included | Not included |
-|----------|--------------|
-| WezTerm config + workbench modules | Author's desk-roots project set |
-| Init panel, gates R1–R6, create wizard | Historical Grok sessions |
-| F6 / F7 / F8 / F9 / Leader Alt+z | PPS product tree |
-| Path slot + tab project labels | Grok API keys / account |
-| open-project.ps1 spawn discipline | Non-Windows hosts |
+| 随仓库提供 | 不随仓库提供 |
+|---|---|
+| WezTerm 配置与工作台模块 | 作者的项目清单与收藏 |
+| Init、项目门禁、4 步创建和动态 Agent 选择 | Agent 凭据、账户和会话原文 |
+| 快捷键、布局、侧栏与路径身份 | 私有 `agent-registry.local.tsv` |
+| 开放发现机制与可选显式清单协议 | macOS/Linux 兼容层 |
 
-## Prerequisites (honest)
-
-1. **Windows** + PowerShell 5.1+
-2. **WezTerm** installed
-3. **Grok Build CLI** on PATH or `~\.grok\bin\grok.exe` (for AI tabs; UI installs without it)
-4. Network not required after clone (offline config)
-
-## Re-verify after install
+## 验收
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\validate_project.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\readiness_check.ps1 -Verified
 powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1 -DoctorOnly
 ```
 
-Manual smoke:
+手工烟测：
 
-1. WezTerm opens → Init table visible  
-2. Bound repo row (if install bound clone) → Enter → Grok `--cwd` = clone path  
-3. `c` wizard → project under default parent → `.wz-project` written  
-4. F7 Explorer root matches path slot  
-
-## Residual gaps (accepted)
-
-- Codex path still via shell `codex` (not hardened like Grok)
-- First-run font (Segoe UI / JetBrains Mono) may fall back if missing — cosmetic
-- User must **restart** WezTerm after install (cannot hot-patch a foreign config load order for first paint 100%)
+1. WezTerm 打开后出现 Init 面板。
+2. `r` 重新探测本机 Agent，新安装且能自描述的 Agent 出现在同一备选列表。
+3. `c` 创建项目时只有 4 步，Agent/CLI 不分离，手填父目录只显示 `[0]`。
+4. `F6` 只在已绑定的强项目路径上创建三栏。
+5. `F7` 的文件根目录与任务路径一致。

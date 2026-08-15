@@ -6,8 +6,8 @@
 
 【核心 F 键 — 只记这些】
   F1   本速查（可能被系统帮助抢走；可再 F1 关）
-  F2   （不绑）留给 AI agent 自身（如 Grok 设置）
-  F3   新建本地项目（严格5步：名 → 位置列表 → 本机CLI → 默认agent → 确认）
+  F2   （不绑）留给 AI Agent 自身
+  F3   新建本地项目（严格4步：名 → 位置列表 → Agent/CLI → 确认）
   F4   关闭当前窗格（有确认）
   F5   重载 WezTerm 配置
   F6   三栏 AI 桌（先选 agent：已装 agent 平权列表，默认=任务路由排第一，↑↓+Enter / Esc 取消）
@@ -19,18 +19,18 @@
   Ctrl+Shift+C / V       → 终端复制/粘贴文字
   AI 对话里 Ctrl+V      → 可粘贴图片（壳不拦截 Ctrl+V）
 
-【新建项目 F3 · 五次输入】
+【新建项目 F3 · 四次输入】
   1 项目名
-  2 位置列表 1-8（最优路径已算好）；0/9=只输入父目录
-  3 本机已装 AI CLI（自动扫描 PATH）
-  4 默认 agent：grok / kimi / codex / deepseek（四选一，写入 desk-roots 第三列）
-  5 确认 Y → 建目录+绑定+启动
+  2 位置列表 1-8（最优路径已算好）；0=只输入父目录
+  3 Agent/CLI 单一选择（开放扫描包元数据/manifest/本地注册；同时写入 desk-roots 第三列）
+  4 确认 Y → 建目录+绑定+启动
 
-【多模型 D-004】
-  启动与 agent 解耦：本机已装 agent 常驻 Init 的 2 AGENT 区；两步同屏——wz> 输任务号，再 agent> 输模型号（默认=该会话/任务的 agent）
-  kimi/deepseek 无 --cwd，靠进程 cwd 定身份；续接手 = kimi --continue / deepseek --continue
-  每次启动 AI 先见走路猫猫读条启动屏（全 agent 统一）；顶栏页签显示当前 agent（Grok/Kimi/Codex/DeepSeek）
-  deepseek 首次使用会在页签内提示输入 API Key（platform.deepseek.com 获取，输入后自动保存）
+【多 Agent · D-016 开放探测】
+  本机全部自描述 Agent 常驻 Init 的 2 AGENT 区；冷启动自动重扫，r 可原地重扫；无产品白名单
+  静默单文件 CLI 可填 workbench/agent-registry.local.tsv，格式：id<TAB>label<TAB>命令或绝对路径（可用 | 分隔别名）
+  两步同屏：wz> 输任务号，再 agent> 输 Agent 号（默认=该会话/任务路由）
+  COMMAND 三列固定对齐，仅 a/r/q 二级操作；无产品专属 Dashboard
+  文件/会话读取的猫猫进度与统一真实计数同步；未知时长的 Agent 启动只显示循环等待动画
 
 【刻意不做】
   Leader 组合键、F8 续聊键、F9 选项目键

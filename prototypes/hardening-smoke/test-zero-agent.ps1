@@ -1,4 +1,4 @@
-# Zero-agent cold-start simulation: strip PATH to bare system, point profile
+﻿# Zero-agent cold-start simulation: strip PATH to bare system, point profile
 # env vars at an empty fake home — Get-Command and every well-known fallback
 # then miss, exactly like a brand-new device with no agent CLI installed.
 # Usage: printf 'q\n' | powershell -NoProfile -File test-zero-agent.ps1

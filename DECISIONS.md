@@ -33,6 +33,9 @@
 - `D-012`
 - `D-013`
 - `D-014`
+- `D-015`
+- `D-016`
+- `D-017`
 <!-- PPS:ACTIVE:END -->
 
 ## Authority Records
@@ -288,8 +291,34 @@
 - Supersedes: 08-09 起的「普通单击拒开链接」硬化（`CompleteSelection`）。
 - Affects: options.lua（mouse_bindings）、sidebar.ps1（Write-ClickablePath launcher 护栏）、prototypes/hardening-smoke/test-sidebar-link.ps1（回归用例）。
 
+### D-015 [active]
+
+- Summary: **新建项目向导收敛为四步并移除历史 `[9]` 别名。** 流程固定为「名称 → 位置 → Agent / CLI → 确认」；选择身份与其启动 CLI 是一个不可拆分的选择，所选 ID 同时写入 `desk-roots.tsv` 第三列并用于首次启动，禁止出现「Codex CLI + grok agent」等矛盾组合。`PowerShell only` 是非 AI 逃生项，显式写 `shell` route id，不得由写出器暗补成 grok。位置页手输父目录入口仅保留 `[0]`，`[9]` 不再显示、解析或出现在错误提示/教学中。
+- Source: 用户 2026-08-15 明确修正：「CLI 和 agent 没有分离的必要，合并成一个选项」「0 或 9 是历史设计错误，只保留 0」。
+- Scope: F3 / Init `c` 新建向导、终端文案、验收清单与教学。
+- Supersedes: D-004 中「新建向导另加选 agent 步」这一交互切片；历史 `[9]` 父目录别名。
+- Affects: live `bootstrap.ps1`、cheatsheet、live README、MAIN §Multi-model handover / R-UI-3 / A3。
+
+### D-016 [active]
+
+- Summary: **Agent 候选采用开放式、元数据驱动探测，COMMAND 固定单元格对齐，删除 Grok 专属 Dashboard。** (1) Init/F3/F6/Installer/Sidebar/open-project 共用 `agent-discovery.ps1`，每次 Init 冷启动重新扫描，面板 `r` 清缓存后原进程重扫；发现源为 PATH 可见 npm/Python 包元数据、可执行文件版本元数据、`*.wz-agent.json`，不得用产品名或固定类型表决定候选资格，也不得执行候选命令做探测。无自描述元数据的独立二进制可由 `agent-registry.local.tsv` 任意登记，安装器永久保留；仓库自带 TSV 不含产品行。未知新 Agent 必须等权展示并可在项目 cwd 新开，产品专属 resume 逻辑只能作为可选适配器，不能成为发现白名单或未知项回退。(2) Init COMMAND 三行共享同一组三列宽度，后续入口的终端起始列固定，不随前项文案长度漂移。(3) 删除面板 `[d] dash(grok)`、处理分支、launch menu 的 Grok Agent Dashboard 与死代码；启动菜单无产品专属项。
+- Source: 用户 2026-08-15 截图反馈「部分选项排列位置不整齐」「似乎还保留了 grok 的专属启动项，不符合平权」+ 后续明确要求「开放性探测，所有本地正确安装的 ai agent 都能正确展示，不写死任何类型」。
+- Scope: Agent 安装发现、Init/F3/F6/Sidebar/open-project 候选与启动、COMMAND 网格、launch menu、安装器和文档。
+- Supersedes: D-005 的固定首装顺序与「写出方缺省暗补 grok」切片；P-011/M2-6 中保留 Grok Dashboard 的例外；任何固定四类 Agent 候选表。D-004/F-011/F-012/F-014 的产品专属续聊事实仍只作为可选适配器有效。
+- Affects: `agent-discovery.ps1`、`agent-registry*.tsv`、`bootstrap.ps1`、`launch.lua`、`layouts.lua`、`desk.lua`、`sidebar.ps1`、`Install-WZ.ps1`、`open-project.ps1`、MAIN/README/INSTALL。
+
+### D-017 [active]
+
+- Summary: **Windows-only 发布蒸馏。** 按「轻量、稳定、高性能、全面 Agent 兼容平权」四原则，对当前工作流做对抗性审查、基线量化、修复与重复回归；开放探测不得退化为产品白名单，专属能力只允许作为可选适配器。可计数的文件/会话读取必须共用真实总进度并在结果发布后才到 100%；不可计数的外部 Agent 就绪阶段使用不定进度动画，不伪造完成率。收口后将 GitHub 仓库改名为 `WZ_AiStarCube_win`，README/安装器明确只支持 Windows，并把验证通过的完整写集提交到远端。
+- Source: 用户 2026-08-15 明确要求全面加固与性能蒸馏、循环迭代至当前需求最优、推送远端并增加 `_win` 后缀；随后要求执行上轮未完成任务，并补充猫猫读条与真实文件读取进度不同轴的问题。
+- Scope: Agent discovery/launch/runtime、路径与写盘门禁、安装/Doctor、性能与对抗回归、Windows-only 文档和 GitHub 发布。
+- Supersedes: 验收前不得发布的旧等待状态；不改变 D-002 的 workbench-first 产品路线。
+- Affects: `live-workbench/`、`Install-WZ.ps1`、`open-project.ps1`、验证脚本、README/INSTALL/MAIN/状态文件、GitHub 仓库名与描述。
+
 ## Status Events
 
+- 2026-08-15: **D-016 开放 Agent 探测 + COMMAND 对齐 + 专属入口清理完成并装载本机。** 新增 `agent-discovery.ps1`：不含任何产品名白名单、不执行候选程序，从 PATH 可见 npm/Python 元数据、exe VersionInfo、`*.wz-agent.json` 与保留的 `agent-registry.local.tsv` 汇总 `{Id,Label,Exe,Source}`；仓库 `agent-registry.tsv` 清空产品行只留协议。Init/F3 的 definitions/peers/wizard CLI、F6 Lua 运行时选择器、Installer Doctor/首绑定、Sidebar/open-project 全部改读同一开放清单；Init 冷启动必重扫，`r` 同时清 definitions/peers；未知 Agent 用通用 PowerShell host 在项目 cwd 启动，已有会话读取/续聊分支仅作为可选 adapter，不再控制候选资格或未知回退。UI：`Write-BoxGridRow` 让 COMMAND 三行共用 40%/34%/余宽三列；删 `[d] dash(grok)` 显示/处理、launch.lua Dashboard 分支和启动菜单项，启动菜单只余 Init/PowerShell/CMD。写出方不再暗补 grok，动态 route 或两列 legacy 均可。回归：(1) 当前机无配置自动由 npm `@openai/codex` 描述识别 `Codex`；(2) 临时 `mock-dynamic` 本地 TSV 在新 Init 进程 AGENT 区出现、清理后消失；(3) 代码从未出现的 `orbit-ai` 仅凭临时 npm 描述 “AI coding agent” + bin 自动命中，证明非换皮白名单；(4) installed Init `q` exit 0/Codex present/Dashboard absent；PS parse 全 0、bootstrap BOM 保持、WezTerm `ls-fonts` exit 0、load guard 无警告；安装器 Doctor ready，live↔`~\.config\wezterm` 19 对同步文件 SHA-256 全一致，本地 registry 0 行且第二次安装确认保留。安装备份：`~\.config\wezterm.bak-20260815-015058`。待用户重启 WezTerm 终验真实列对齐/启动菜单/F6。
+- 2026-08-15: **D-015 新建向导四步化。** 删除独立 Default agent 步，将 Step 3 改为 Agent / CLI 单一选择：选择 ID 同时决定首次启动与 desk-roots 第三列，PowerShell-only 显式记为 `shell`、不伪造 grok；确认页只显示一组 AGENT/CLI 身份。位置手输父目录仅接受 `[0]`，同步清除 `[9]` 的 UI、解析、错误提示与教学。自动冒烟覆盖 Codex→codex、PowerShell→shell、输入 9 被拒、无第五步；PS 解析/配置 load guard/项目验证通过，live↔镜像哈希一致。待用户 F3 live 冒烟。
 - 2026-08-14: **侧边栏不可点击根查明 + D-014 落地：单击开链接恢复 + launcher 扩展结构性去链接。** 根因：非代码回归——发射链路（OSC-8/Write-ClickablePath/字节结构）实测完好，是 08-09 的硬化把普通单击改为只完成选区（当时的动机是误点 .cmd/信任目录），Ctrl+Click/中键一直是唯一入口，用户体感为「又不能点了」。修复（用户指令）+ 加固双轨：(1) options.lua 左键 Up 改 `CompleteSelectionOrOpenLinkAtMouseCursor`——拖选语义保留、单击链接直接打开（已用 show-keys 实测该 action 在本机 wezterm 20240203 真实注册）；(2) sidebar `Write-ClickablePath` 加 launcher 扩展护栏（.exe/.cmd/.bat/.com/.scr/.reg/.vbs/.vbe/.lnk/.msi 渲染为纯文本不生成链接），可执行对象只能键盘 `o N` 显式打开——原始误开顾虑被结构性消除，而非靠禁用交互。审查：全仓 OSC-8 发射口唯一化确认（sidebar 三调用点全覆盖）；hyperlinks.lua 安全扩展白名单复核无双击执行面；`swallow_mouse_click_on_pane_focus=false` 使未聚焦侧栏首击即开（顺带聚焦），符合直觉。回归：test-sidebar-link.ps1 新用例 ALL PASS（普通文件 OSC-8 结构良好 / 4 个 launcher 扩展零链接 / 目录仍可点）；bom-and-parse 重挂 parse 0×2；真实配置 ls-fonts exit=0 + show-keys 6 处注册；options.lua 配平 OK；live↔镜像 md5 一致。**待用户 live 终验**：wezterm 完全重开（options.lua 是模块文件，自动重载不盯）后——侧栏单击文件/目录名直接打开，.cmd/.exe 行仍为纯文本，拖拽选择文字不受影响。
 
 - 2026-08-14: **P-011 加固 R2 施工完成 + 全量回归绿 + 推送远端。** 施工范围 = 用户批准的全量（M2-1~M2-5 全修、M2-6 按 A 移除三个裸 agent @ home 入口、L2-1/2/3/5/7/9 随清；L2-4/6/8 留观察）。bootstrap.ps1：M2-1 两处数字分支 `$line.Length -gt 4` 上限 + StatusHint/ScreenDirty（step-2 本就 TryParse 无患，回归实证）；M2-2 Find-AgentExe kimi/codex/deepseek 空环境变量护栏 + Build-InstalledAiCliOptions 条件数组；M2-4 向导 spawn 改用已解析 `$Exe` 全路径；L2-2 两个 Read-Host 后 `$null -eq $line → break`（EOF 防死循环）；L2-3 非 shell 分支补 R1 复验；L2-5 `r` 键清 `$script:AgentPeers` 缓存；L2-1 splash 注释 Magenta 归位；L2-7 splash 令牌改罕见串 `__WZ_SPLASH_*_7F3A__`；L2-9 零 agent 提示补 deepseek。Install-WZ.ps1：M2-3 Resolve-AgentExe deepseek 分支 + Doctor/绑定列四平权 + 注释；M2-5 四处 Yellow 归位（Write-Warn/Next steps/警告行 → DarkCyan/Cyan）。open-project.ps1 三处 + profile-snippet/cheatsheet/load_guard 各其位 Yellow/DarkYellow → DarkCyan/Cyan。launch.lua：M2-6(A) launch_menu 删 ◆ Kimi/◎ Codex/◇ DeepSeek @home 三块（保留 Init/grok dashboard/PowerShell/CMD）。回归：BOM 重挂 parse 0×2；管道冒烟 q / 2qq / 99999999999（得「number too long」提示而非红错误）/ 空 stdin（干净退出不空转）/ step-2 超长（TryParse 优雅「no such agent」）exit 全 0；零 agent S1/S3 渲染干净 + 兜底提示 + not found；宽度模态 psw=100 仅回显行偏差；lua 配平 10/10；splash 单测 ALL PASS×2；ls-fonts exit=0；live↔镜像 10 文件 md5 全一致；残留 Yellow 终审全部为输入前缀（wz>/agent 1-N/explorer>/wizard 提示符）= D-013 有意保留。**待用户 live 终验**：启动菜单只剩四个干净入口；超长数字手滑不再脏屏。
@@ -351,6 +380,6 @@
 
 - Method: `M-004`
 - Fact: `F-015`
-- Decision: `D-014`
+- Decision: `D-017`
 
 These hints are conveniences, not authority. Search before allocating an ID.

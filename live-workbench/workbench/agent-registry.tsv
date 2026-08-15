@@ -1,0 +1,3 @@
+# WZ agent fallback registry - id<TAB>label<TAB>command aliases separated by |
+# No product list is shipped: discovery is metadata-driven and has no agent-name whitelist.
+# Put silent standalone CLIs in agent-registry.local.tsv; the installer preserves that file.

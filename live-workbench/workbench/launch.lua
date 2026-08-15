@@ -20,84 +20,74 @@ local function file_exists(p)
   return false
 end
 
---- Resolve an agent CLI portably (D-004: all peers).
---- MUST NOT call wezterm.run_child_process here: this runs at require() during
---- config evaluation; child process yield → "attempt to yield across a C-call
---- boundary" and WezTerm falls back to a blank default config (lost workbench).
---- M-4: PATH scan skips UNC (\\host\share) and empty entries — io.open on a
---- network root can block hundreds of ms PER entry at config load.
-local AGENT_EXE_NAMES = {
-  grok = { "grok.exe", "grok.cmd" },
-  kimi = { "kimi.exe", "kimi.cmd" },
-  codex = { "codex.exe", "codex.cmd" },
-  deepseek = { "deepseek.cmd", "deepseek.exe", "deepseek" },
-}
-
-local function agent_fixed_candidates(agent)
-  local c = {}
-  local la = os.getenv("LOCALAPPDATA")
-  if agent == "grok" then
-    table.insert(c, home .. "\\.grok\\bin\\grok.exe")
-    if la and la ~= "" then
-      table.insert(c, la .. "\\Programs\\grok\\grok.exe")
-      table.insert(c, la .. "\\grok\\bin\\grok.exe")
-    end
-  elseif agent == "kimi" then
-    table.insert(c, home .. "\\.kimi-code\\bin\\kimi.exe")
-    table.insert(c, home .. "\\.kimi\\bin\\kimi.exe")
-  elseif agent == "codex" then
-    if la and la ~= "" then
-      table.insert(c, la .. "\\Programs\\codex\\codex.exe")
-    end
-    local ap = os.getenv("APPDATA")
-    if ap and ap ~= "" then
-      table.insert(c, ap .. "\\npm\\codex.cmd")
-    end
-  elseif agent == "deepseek" then
-    -- npm global install (@kavienw/deepseek-cli) → %APPDATA%\npm\deepseek.cmd
-    local apd = os.getenv("APPDATA")
-    if apd and apd ~= "" then
-      table.insert(c, apd .. "\\npm\\deepseek.cmd")
-    end
-  end
-  return c
-end
-
---- Fixed candidates first, then PATH dirs (pure env + io; no where.exe).
---- Returns full path or nil when the agent CLI is not installed.
-local function find_agent_exe(agent)
-  local names = AGENT_EXE_NAMES[agent]
-  if not names then
-    return nil
-  end
-  for _, p in ipairs(agent_fixed_candidates(agent)) do
-    if file_exists(p) then
-      return p
-    end
-  end
-  local path_env = os.getenv("PATH") or os.getenv("Path") or ""
-  for dir in path_env:gmatch("[^;]+") do
-    dir = tostring(dir):gsub("^%s+", ""):gsub("%s+$", ""):gsub("[/\\]+$", "")
-    if dir ~= "" and not dir:match("^[/\\][/\\]") then
-      for _, name in ipairs(names) do
-        local p = dir .. "\\" .. name
-        if file_exists(p) then
-          return p
-        end
-      end
-    end
-  end
-  return nil
-end
-
-local function resolve_grok_exe()
-  -- fallback path (error messages still make sense)
-  return find_agent_exe("grok") or (home .. "\\.grok\\bin\\grok.exe")
-end
-
-M.grok_exe = resolve_grok_exe()
 M.bootstrap_ps1 = home .. "\\.config\\wezterm\\workbench\\bootstrap.ps1"
+M.agent_discovery_ps1 = home .. "\\.config\\wezterm\\workbench\\agent-discovery.ps1"
 M.no_bootstrap_flag = home .. "\\.config\\wezterm\\workbench\\no-bootstrap"
+
+-- D-016: MUST NOT call wezterm.run_child_process at require/config-load time.
+-- Defer discovery until a user action. run_child_process at require()
+-- time can invalidate the WezTerm config; F6 and other runtime actions are safe.
+-- The helper returns arbitrary product ids, so Lua has no agent whitelist.
+local agent_defs = nil
+local agent_order = nil
+
+local function parse_agent_tsv(text)
+  local defs = {}
+  local order = {}
+  for line in tostring(text or ""):gmatch("[^\r\n]+") do
+    local id, label, exe, source = line:match("^([^\t]+)\t([^\t]+)\t([^\t]+)\t?(.*)$")
+    if id and exe and file_exists(exe) then
+      id = tostring(id):lower()
+      defs[id] = { id = id, label = label, exe = exe, source = source }
+      table.insert(order, id)
+    end
+  end
+  return defs, order
+end
+
+function M.refresh_agents()
+  if not file_exists(M.agent_discovery_ps1) then
+    agent_defs, agent_order = {}, {}
+    wezterm.GLOBAL.wz_agent_route_ids = {}
+    return {}
+  end
+  local ok, stdout = wezterm.run_child_process({
+    "powershell.exe",
+    "-NoLogo",
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    M.agent_discovery_ps1,
+    "-AsTsv",
+  })
+  if ok then
+    agent_defs, agent_order = parse_agent_tsv(stdout)
+  else
+    agent_defs, agent_order = {}, {}
+  end
+  -- Runtime-only handoff for desk.lua process recognition. This keeps process
+  -- matching data-driven without triggering discovery from status/HUD ticks.
+  wezterm.GLOBAL.wz_agent_route_ids = agent_order or {}
+  return agent_order
+end
+
+local function ensure_agents()
+  if agent_defs == nil then
+    M.refresh_agents()
+  end
+end
+
+function M.installed_agents(refresh)
+  if refresh or agent_defs == nil then
+    M.refresh_agents()
+  end
+  local out = {}
+  for _, id in ipairs(agent_order or {}) do
+    table.insert(out, id)
+  end
+  return out
+end
 
 --- Task init panel (startup + new tab default / + button)
 function M.bootstrap_args()
@@ -145,24 +135,52 @@ end
 
 --- Args that start an interactive PowerShell running a command
 function M.ps_command(cmd)
-  return { "powershell.exe", "-NoLogo", "-NoExit", "-Command", cmd }
+  return {
+    "powershell.exe",
+    "-NoLogo",
+    "-NoProfile",
+    "-NoExit",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    cmd,
+  }
 end
 
---- Args that start Grok directly when possible
+local function ps_literal(value)
+  return "'" .. tostring(value or ""):gsub("'", "''") .. "'"
+end
+
+--- Build a launch argv from the exact path returned by open discovery.
+--- Native executables stay direct (fast); Windows shims/scripts go through
+--- PowerShell because CreateProcess cannot safely use .cmd/.bat/.ps1 as argv0.
+function M.command_args(agent, args)
+  local exe = M.resolve_agent_exe(agent)
+  if not exe or not file_exists(exe) then
+    return nil
+  end
+  args = args or {}
+  local lower = tostring(exe):lower()
+  if lower:match("%.exe$") or lower:match("%.com$") then
+    local out = { exe }
+    for _, arg in ipairs(args) do
+      table.insert(out, tostring(arg))
+    end
+    return out
+  end
+  local command = "& " .. ps_literal(exe)
+  for _, arg in ipairs(args) do
+    command = command .. " " .. ps_literal(arg)
+  end
+  return M.ps_command(command)
+end
+
+--- Args that start the optional Grok adapter when present
 --- opts.continue  → -c (resume most recent session for this cwd)
 --- opts.resume    → -r <id-or-title>
---- opts.dashboard → open Agent Dashboard
 function M.grok_args(cwd, opts)
   opts = opts or {}
-  if opts.dashboard then
-    local args = { M.grok_exe, "dashboard" }
-    if cwd and tostring(cwd) ~= "" then
-      -- dashboard is global, but start process with project cwd for context
-      return args, cwd
-    end
-    return args, nil
-  end
-  local args = { M.grok_exe }
+  local args = {}
   if cwd and tostring(cwd) ~= "" then
     table.insert(args, "--cwd")
     table.insert(args, tostring(cwd))
@@ -173,101 +191,91 @@ function M.grok_args(cwd, opts)
   elseif opts["continue"] or opts.continue_session then
     table.insert(args, "--continue")
   end
-  return args
+  return M.command_args("grok", args)
 end
 
 function M.grok_continue_args(cwd)
   return M.grok_args(cwd, { continue_session = true })
 end
 
-function M.codex_args()
-  -- winget shim is a .cmd; go through PowerShell so PATH resolves cleanly
-  return M.ps_command("codex")
+function M.codex_args(opts)
+  opts = opts or {}
+  local args = {}
+  if opts["continue"] or opts.continue_session then
+    args = { "resume", "--last" }
+  end
+  return M.command_args("codex", args)
 end
 
 --- F-014: DeepSeek CLI — npm .cmd shim, same PowerShell-host pattern; no
 --- --cwd flag (process cwd = project identity), resume = --continue.
-function M.deepseek_args()
-  return M.ps_command("deepseek")
+function M.deepseek_args(opts)
+  opts = opts or {}
+  local args = {}
+  if opts["continue"] or opts.continue_session then
+    args = { "--continue" }
+  end
+  return M.command_args("deepseek", args)
 end
 
 --- D-004: kimi has no --cwd; task identity = process cwd (spawn cwd).
 --- Same PowerShell-host pattern as codex (shim-safe, keeps tab open on exit).
 function M.kimi_args(opts)
   opts = opts or {}
+  local args = {}
   if opts["continue"] or opts.continue_session then
     -- Same-model handover: resume most recent session in this cwd
-    return M.ps_command("kimi --continue")
+    args = { "--continue" }
   end
-  return M.ps_command("kimi")
+  return M.command_args("kimi", args)
 end
 
---- D-004: agents are peers. Route spawn args by the task's agent.
---- agent: "grok" (缺省/unknown fallback) / "kimi" / "codex".
+--- D-016: all discovered agents are peers. Product-specific branches below are
+--- optional resume adapters, never a discovery whitelist or unknown fallback.
 --- opts.continue_session → resume the agent's latest session for this cwd.
 function M.agent_args(agent, cwd, opts)
   opts = opts or {}
+  agent = tostring(agent or ""):lower()
+  if not M.resolve_agent_exe(agent) then
+    return nil
+  end
   local cont = opts["continue"] or opts.continue_session
   if agent == "kimi" then
     return M.kimi_args({ continue_session = cont })
   end
   if agent == "codex" then
-    if cont then
-      -- codex sessions live in ~/.codex/sessions; --last resumes the newest
-      return M.ps_command("codex resume --last")
-    end
-    return M.codex_args()
+    return M.codex_args({ continue_session = cont })
   end
   if agent == "deepseek" then
+    return M.deepseek_args({ continue_session = cont })
+  end
+  if agent == "grok" then
     if cont then
-      -- per-cwd session: ~/.deepseek-cli/sessions/<sha256(cwd)[0:16]>.json
-      return M.ps_command("deepseek --continue")
+      return M.grok_continue_args(cwd)
     end
-    return M.deepseek_args()
+    return M.grok_args(cwd)
   end
-  if cont then
-    return M.grok_continue_args(cwd)
-  end
-  return M.grok_args(cwd)
+  return M.command_args(agent)
 end
 
 --- Display name for toasts / tab titles
 function M.agent_label(agent)
-  if agent == "kimi" then
-    return "Kimi"
-  end
-  if agent == "codex" then
-    return "Codex"
-  end
-  if agent == "deepseek" then
-    return "DeepSeek"
-  end
-  return "Grok"
+  ensure_agents()
+  agent = tostring(agent or ""):lower()
+  local def = agent_defs and agent_defs[agent]
+  return (def and def.label) or agent
 end
 
---- True when grok.exe was actually found (pure io check; safe at runtime).
---- Callers must degrade gracefully (toast) instead of spawning a dead path.
+--- Compatibility helper for the optional Grok resume adapter.
 function M.has_grok()
-  return file_exists(M.grok_exe)
+  return M.resolve_agent_exe("grok") ~= nil
 end
-
---- M-1 (D-005 平权): runtime availability for any agent CLI, memoized per
---- config generation. kimi/codex spawn via PowerShell shims — checking here
---- prevents "'kimi' 不是命令" dead tabs when a bound agent was uninstalled.
-local agent_exe_memo = {}
 
 function M.resolve_agent_exe(agent)
-  agent = tostring(agent or "grok"):lower()
-  if agent == "grok" then
-    if M.has_grok() then
-      return M.grok_exe
-    end
-    return nil
-  end
-  if agent_exe_memo[agent] == nil then
-    agent_exe_memo[agent] = find_agent_exe(agent) or false
-  end
-  return agent_exe_memo[agent] or nil
+  ensure_agents()
+  agent = tostring(agent or ""):lower()
+  local def = agent_defs and agent_defs[agent]
+  return def and def.exe or nil
 end
 
 function M.has_agent(agent)
@@ -305,17 +313,11 @@ end
 function M.apply(config)
   -- R1/M2-6: never advertise bare agent sessions @ home — an agent's identity
   -- must be a bound project (D-003). Real work starts from the Init panel;
-  -- the only escapes below are plain shells. (grok/kimi/codex/deepseek
-  -- @home entries removed 2026-08-14; grok dashboard kept as non-project panel)
+  -- the only escapes below are plain shells; no product gets a private menu.
   config.launch_menu = {
     {
       label = "★ WZ 任务初始化面板（选/建项目后再开 AI）",
       args = M.bootstrap_args(),
-      cwd = home,
-    },
-    {
-      label = "▦ Grok Agent Dashboard（grok 专属会话面板，非项目）",
-      args = { M.grok_exe, "dashboard" },
       cwd = home,
     },
     {

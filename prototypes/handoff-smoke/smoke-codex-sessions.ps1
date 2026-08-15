@@ -1,4 +1,4 @@
-# Smoke test: Read-CodexSessionSummaries extracted from live bootstrap.ps1
+﻿# Smoke test: Read-CodexSessionSummaries extracted from live bootstrap.ps1
 # Run: powershell -NoProfile -File smoke-codex-sessions.ps1
 # NOTE: PS 5.1 reads BOM-less .ps1 as ANSI — never use non-ASCII literals in
 # assertions below; expected values are derived from the data itself.

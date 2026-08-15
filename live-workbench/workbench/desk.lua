@@ -89,9 +89,6 @@ function M.path_under(child, root)
   return a:sub(1, #b + 1) == b .. "\\"
 end
 
---- Agent home dirs are tool state, never projects (R2 · D-004: all peers)
-local AGENT_HOME_DIRS = { ".grok", ".kimi", ".kimi-code", ".codex", ".deepseek-cli", ".deepseek" }
-
 --- Reserved binding names that must never be treated as real projects
 local RESERVED_NAMES = {
   home = true,
@@ -110,9 +107,6 @@ local RESERVED_NAMES = {
   [".config"] = true,
   wezterm = true,
 }
-for _, d in ipairs(AGENT_HOME_DIRS) do
-  RESERVED_NAMES[d] = true
-end
 
 function M.is_reserved_name(name)
   if not name or name == "" then
@@ -145,12 +139,6 @@ function M.is_weak_path(path)
       hl .. "\\.config",
       hl .. "\\.config\\wezterm",
     }
-    -- Agent home dirs + their state subdirs (D-004: all peers, same rule)
-    for _, d in ipairs(AGENT_HOME_DIRS) do
-      table.insert(weak_exact, hl .. "\\" .. d)
-      table.insert(weak_exact, hl .. "\\" .. d .. "\\bin")
-      table.insert(weak_exact, hl .. "\\" .. d .. "\\sessions")
-    end
     for _, w in ipairs(weak_exact) do
       if pl == w then
         return true
@@ -158,6 +146,13 @@ function M.is_weak_path(path)
     end
     -- Whole trees that are never project roots
     if pl:sub(1, #hl + 9) == hl .. "\\appdata" then
+      return true
+    end
+    -- Any hidden directory directly below the user profile is tool/config
+    -- state by default. This open rule protects future Agent homes without a
+    -- product-name list; real projects belong under an explicit strong root.
+    local rel = pl:sub(#hl + 2)
+    if rel:match("^%.[^\\]+") then
       return true
     end
   end
@@ -261,14 +256,40 @@ function M.process_name(pane)
   return ""
 end
 
-function M.is_ai_process(name)
+-- Forward declaration: the parser-backed implementation is assigned below;
+-- process helpers can call it after module initialization without a cycle.
+local read_agent_map
+
+local function dynamic_agent_id_for_process(name)
   if not name or name == "" then
-    return false
+    return nil
   end
-  name = name:lower()
-  return name:find("grok", 1, true) ~= nil
-    or name:find("codex", 1, true) ~= nil
-    or name:find("kimi", 1, true) ~= nil
+  local leaf = tostring(name):lower():gsub("/", "\\"):match("([^\\]+)$") or tostring(name):lower()
+  leaf = leaf:gsub("%.exe$", ""):gsub("%.com$", ""):gsub("%.cmd$", ""):gsub("%.bat$", ""):gsub("%.ps1$", "")
+  local ids = {}
+  local live = wezterm.GLOBAL.wz_agent_route_ids
+  if type(live) == "table" then
+    for _, id in ipairs(live) do
+      ids[tostring(id):lower()] = true
+    end
+  end
+  -- Bound route ids are available before the first runtime discovery action.
+  local agents = read_agent_map and read_agent_map() or nil
+  if type(agents) == "table" then
+    for _, id in pairs(agents) do
+      ids[tostring(id):lower()] = true
+    end
+  end
+  for id in pairs(ids) do
+    if leaf == id then
+      return id
+    end
+  end
+  return nil
+end
+
+function M.is_ai_process(name)
+  return dynamic_agent_id_for_process(name) ~= nil
 end
 
 function M.is_explorer_process(name, pane)
@@ -454,7 +475,11 @@ local function parse_roots()
   local map, agents = {}, {}
   local f = io.open(roots_file, "r")
   if not f then
-    return map, agents
+    -- Crash recovery for the two-rename transaction in write_map.
+    f = io.open(roots_file .. ".bak", "r")
+    if not f then
+      return map, agents
+    end
   end
   for line in f:lines() do
     -- strip UTF-8 BOM
@@ -502,7 +527,7 @@ local function read_map(fresh)
   return map
 end
 
-local function read_agent_map()
+read_agent_map = function()
   if roots_cache.agents and (os.time() - roots_cache.t) < ROOTS_CACHE_TTL_SEC then
     return roots_cache.agents
   end
@@ -522,7 +547,7 @@ local function write_map(map)
     "# AI STAR CUBE desk roots — project_name<TAB>absolute_path[<TAB>agent]",
     "# 项目名(绑定名) 与 项目路径 的写死绑定；Explorer / 状态栏 / F6 / Init 共用",
     "# 弱路径(home/Desktop/…)与保留名不得写入；创建项目时一次写死",
-    "# 第三列 agent 显式写出（含 grok 缺省）: grok / kimi / codex / deepseek (D-004/D-005/F-014)",
+    "# 第三列 route id 来自开放式 Agent 探测；未绑定时保留两列",
   }
   local keys = {}
   for k in pairs(map) do
@@ -532,19 +557,19 @@ local function write_map(map)
   for _, ws in ipairs(keys) do
     local p = M.normalize(map[ws])
     if p and M.is_strong_path(p) and not M.is_reserved_name(ws) then
-      -- D-005: ALWAYS write the 3rd column explicitly (grok included).
-      -- Dropping it let the row drift to first-installed agent after an
-      -- uninstall — silent binding change. Readers tolerate 2-col legacy.
       local a = agents[ws]
-      if not a or a == "" then
-        a = "grok"
+      if a and a ~= "" then
+        table.insert(lines, ws .. "\t" .. p .. "\t" .. a)
+      else
+        table.insert(lines, ws .. "\t" .. p)
       end
-      table.insert(lines, ws .. "\t" .. p .. "\t" .. a)
     end
   end
-  -- L-3: atomic temp+rename — never truncate the bindings file in place
-  -- (a crash mid-write used to lose every desk binding).
+  -- Recoverable two-rename transaction. Windows cannot rename over an
+  -- existing file; deleting the target first created a crash window where all
+  -- bindings vanished. Keep the old file as .bak until the new file is live.
   local tmp = roots_file .. ".tmp"
+  local bak = roots_file .. ".bak"
   local f = io.open(tmp, "w")
   if not f then
     return false
@@ -552,22 +577,23 @@ local function write_map(map)
   f:write(table.concat(lines, "\n"))
   f:write("\n")
   f:close()
-  os.remove(roots_file) -- Windows rename() refuses an existing target
+  os.remove(bak)
+  local old = io.open(roots_file, "r")
+  if old then
+    old:close()
+    local moved_old = os.rename(roots_file, bak)
+    if not moved_old then
+      os.remove(tmp)
+      return false
+    end
+  end
   local ok = os.rename(tmp, roots_file)
   if not ok then
-    -- fallback: copy contents back, never leave only a .tmp behind
-    local r = io.open(tmp, "r")
-    local content = r and r:read("*a")
-    if r then
-      r:close()
-    end
-    local w = content and io.open(roots_file, "w")
-    if w then
-      w:write(content)
-      w:close()
-      ok = true
-    end
+    -- Restore the previous known-good file; leave no half-written target.
+    os.rename(bak, roots_file)
     os.remove(tmp)
+  else
+    os.remove(bak)
   end
   if ok then
     -- cache is now exactly what we wrote
@@ -578,7 +604,7 @@ local function write_map(map)
   return ok and true or false
 end
 
---- D-004: default agent for a binding name; nil = grok (缺省)
+--- Agent route for a binding name; nil means caller must use discovery default.
 function M.agent_for_name(name)
   if not name or name == "" then
     return nil
@@ -586,7 +612,7 @@ function M.agent_for_name(name)
   return read_agent_map()[name]
 end
 
---- D-004: default agent for a task root path (via binding name); nil = grok
+--- Agent route for a task root path; nil means caller must use discovery default.
 function M.agent_for_path(path)
   local name = M.name_for_path(path)
   if not name then
@@ -1189,17 +1215,12 @@ function M.role_for_process(name)
     return "shell"
   end
   name = name:lower()
-  if name:find("grok") then
-    return "AI·Grok"
-  end
-  if name:find("kimi") then
-    return "AI·Kimi"
-  end
-  if name:find("codex") then
-    return "AI·Codex"
-  end
-  if name:find("deepseek") then
-    return "AI·DeepSeek"
+  local agent = dynamic_agent_id_for_process(name)
+  if agent then
+    local label = agent:gsub("[-_]", " "):gsub("(%a)([%w']*)", function(first, rest)
+      return first:upper() .. rest
+    end)
+    return "AI·" .. label
   end
   if name:find("cheatsheet") then
     return "help"

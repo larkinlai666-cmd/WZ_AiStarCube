@@ -14,13 +14,13 @@
 - Capsule: CONTEXT.md
 - Coverage: CONTEXT.md
 - Blockers: none
-- Next: User: wezterm 完全重开后终验（① 侧栏单击文件/目录名直接打开，.cmd/.exe 纯文本用 `o N` 开；② 拖拽选择不受影响；③ 启动菜单四入口）→ F6 三栏形态定夺 → 批准验收清单（P-006 → D）→ 逐项打勾 A1–C4.
-- Updated: 2026-08-14T16:20:00Z
+- Next: Execute D-017 adversarial hardening/performance regression, sync live install, publish verified commit, then rename the remote repository to WZ_AiStarCube_win.
+- Updated: 2026-08-15T01:00:00Z
 - Device: SK-20240507HWFH
 
 ## Objective
 
-Build **WZ-AiWorkBench**: a personal AI workbench product centered on WezTerm / **AI STAR CUBE**, strong enough for daily agent workflows (Grok, Codex, etc.). **First** finish the live workbench to the author’s satisfaction; **then** encapsulate behavior as one or more skills and related engineering modules under the WZ-AiWorkBench name.
+Build **WZ-AiWorkBench**: a Windows-only personal AI workbench centered on WezTerm / **AI STAR CUBE**, with open, product-neutral discovery for locally installed Agent CLIs. **First** finish the live workbench to the author’s satisfaction; **then** encapsulate behavior as one or more skills and related engineering modules under the WZ-AiWorkBench name.
 
 This repository is the **WZ-AiWorkBench product project**. It is **not** a fork of PPS. PPS is only the external working protocol (bounded resume, authority IDs, worksets, close gates).
 

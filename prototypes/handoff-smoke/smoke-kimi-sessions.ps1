@@ -1,4 +1,4 @@
-# Smoke test: Read-KimiSessionSummaries extracted from live bootstrap.ps1
+﻿# Smoke test: Read-KimiSessionSummaries extracted from live bootstrap.ps1
 # Run: powershell -NoProfile -File smoke-kimi-sessions.ps1
 $ErrorActionPreference = 'Stop'
 $live = 'C:\Users\Administrator\.config\wezterm\workbench\bootstrap.ps1'
