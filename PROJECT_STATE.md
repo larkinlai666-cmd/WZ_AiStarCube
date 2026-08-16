@@ -14,8 +14,8 @@
 - Capsule: CONTEXT.md
 - Coverage: CONTEXT.md
 - Blockers: none
-- Next: Execute D-017 adversarial hardening/performance regression, sync live install, publish verified commit, then rename the remote repository to WZ_AiStarCube_win.
-- Updated: 2026-08-15T01:00:00Z
+- Next: User live acceptance of the installed Windows workbench; continue only from observed interaction gaps.
+- Updated: 2026-08-16T06:43:57Z
 - Device: SK-20240507HWFH
 
 ## Objective
