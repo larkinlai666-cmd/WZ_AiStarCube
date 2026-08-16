@@ -6,12 +6,13 @@ WZ_AiStarCube_win 把项目路径、终端任务和本机 AI Agent 放进同一�
 
 ## 当前能力
 
-- 开放式发现本机 Agent：从 PATH、npm、Python、可执行文件元数据、`*.wz-agent.json` 与用户本地注册表收集候选，不维护产品白名单。
+- 开放式发现本机 Agent：合并当前进程与最新持久化 PATH，从 npm、Python、可执行文件静态能力元数据、`*.wz-agent.json` 与用户本地注册表收集候选，不维护产品白名单，也不执行候选程序做探测。
 - Agent 与 CLI 合并为一个选择：每个发现结果同时携带显示名称和准确启动路径。
 - 4 步新建流程：项目名 → 位置 → Agent → 确认；手填父目录只保留 `[0]`。
 - 动态 Agent 一律进入同一选择器、启动路由和状态识别；没有产品专属主入口。
 - 项目路径门禁阻止用户目录、系统目录、临时目录、隐藏工具目录和盘符根目录成为正式项目。
 - 文件与会话读取使用一个全局真实进度轴；无法预知时长的外部 Agent 启动使用不定进度动画，不伪造完成百分比。
+- Codex 续聊会比较当前 CLI 与会话写入版本；旧 CLI 不再打开必然失败的页签，而是在 Init 原页提示升级并允许按 `r` 后重试。
 - 配置、项目绑定和本地清单采用同目录临时文件、校验与原子替换，降低断电或并发写入造成的损坏风险。
 
 ## 平台与依赖
@@ -47,15 +48,15 @@ powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1 -DoctorOnly
 
 ## Agent 发现
 
-重新执行安装器或在 Init 面板按 `r` 会重新探测。发现逻辑是能力与元数据驱动的，不要求 Agent 属于某个已知品牌。
+重新执行安装器或在 Init 面板任一步骤按 `r` 会重新探测。探测器直接重读用户/系统持久化 PATH，所以安装器刚写入 PATH 后不必重启整个 WezTerm。发现逻辑是能力与元数据驱动的，不要求 Agent 属于某个已知品牌。
 
 自动来源包括：
 
-- PATH 中的可执行入口及其同目录元数据
+- 当前进程 PATH 与最新用户/系统持久化 PATH 中的可执行入口
 - npm 全局包的 `package.json` / `bin`
 - Python `console_scripts` / 包元数据
+- 独立用户级 `app\bin` EXE 的版本资源或静态 AI/coding-agent 能力声明（带文件指纹缓存，不启动 EXE）
 - `*.wz-agent.json` 显式清单
-- 安装目录内可验证的可执行入口
 
 无法自描述的独立二进制可以写入私有文件：
 
@@ -63,7 +64,7 @@ powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1 -DoctorOnly
 %USERPROFILE%\.config\wezterm\workbench\agent-registry.local.tsv
 ```
 
-格式为 `id<TAB>label<TAB>command-or-absolute-path`；第三列可用 `|` 分隔多个入口别名。该文件不会进入仓库。发现器最终解析并记录准确路径，同时执行去重、控制字符清理和元数据读取限额。
+格式为 `id<TAB>label<TAB>command-or-absolute-path`；第三列可用 `|` 分隔多个入口别名。该文件不会进入仓库。发现器最终解析并记录准确路径，同时执行别名折叠、去重、控制字符清理、元数据读取限额和静态扫描总量限制。
 
 ## 使用
 

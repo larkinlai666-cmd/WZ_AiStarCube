@@ -44,6 +44,7 @@ $script:AgentRegistryFile = Join-Path $PSScriptRoot 'agent-registry.tsv'
 $script:AgentRegistryLocalFile = Join-Path $PSScriptRoot 'agent-registry.local.tsv'
 $script:AgentDiscoveryFile = Join-Path $PSScriptRoot 'agent-discovery.ps1'
 $script:AgentDefinitions = $null
+$script:CodexRuntimeVersions = @{} # exact executable path -> parsed CLI version
 $script:Grok          = $null  # resolved below
 $script:DefaultParent = $null  # resolved below
 $script:MaxRows       = 18
@@ -701,6 +702,44 @@ function Read-KimiSessionSummaries {
   return @($rows | Sort-Object Updated -Descending)
 }
 
+function ConvertTo-WzNumericVersion {
+  param([string]$Text)
+  if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
+  $m = [regex]::Match($Text, '(?<!\d)(\d+)\.(\d+)\.(\d+)')
+  if (-not $m.Success) { return $null }
+  try { return [version]('{0}.{1}.{2}' -f $m.Groups[1].Value, $m.Groups[2].Value, $m.Groups[3].Value) }
+  catch { return $null }
+}
+
+function Test-CodexResumeCompatible {
+  param([string]$RuntimeVersion, [string]$SessionVersion)
+  # Unknown versions must not become a false-negative gate. When both versions
+  # are known, an older reader must never receive a rollout written by a newer
+  # Codex schema (observed 0.137.0 trying to read 0.145.0-alpha.18).
+  $runtime = ConvertTo-WzNumericVersion -Text $RuntimeVersion
+  $session = ConvertTo-WzNumericVersion -Text $SessionVersion
+  if ($null -eq $runtime -or $null -eq $session) { return $true }
+  return ($runtime.CompareTo($session) -ge 0)
+}
+
+function Get-CodexRuntimeVersion {
+  param([string]$Exe)
+  if ([string]::IsNullOrWhiteSpace($Exe)) { return '' }
+  $key = $Exe.Trim().ToLowerInvariant()
+  if ($script:CodexRuntimeVersions.ContainsKey($key)) { return [string]$script:CodexRuntimeVersions[$key] }
+  $version = ''
+  try {
+    # Launch-time capability probe only. Discovery remains metadata-only and
+    # never executes candidates; this runs after the user explicitly picked
+    # Codex resume and is cached for the lifetime of the Init process.
+    $raw = (& $Exe --version 2>$null | Out-String).Trim()
+    $m = [regex]::Match($raw, '(?<!\d)\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?')
+    if ($m.Success) { $version = $m.Value }
+  } catch {}
+  $script:CodexRuntimeVersions[$key] = $version
+  return $version
+}
+
 function Read-CodexSessionSummaries {
   param([object[]]$Files, [switch]$IndexCounted)
   # Codex CLI parity: sessions live in ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl;
@@ -771,6 +810,7 @@ function Read-CodexSessionSummaries {
       SessionSummary = ''
       RecentPrompts = @()
       SessionCwd = [string]$workPath
+      SessionCliVersion = $(if ($p.cli_version) { [string]$p.cli_version } else { '' })
       IsWeak = [bool](Test-WeakPath -Cwd $workPath)
     }
   }
@@ -967,6 +1007,7 @@ function Build-Rows {
         RecentPrompts = $best.RecentPrompts; DiskBytes = $best.DiskBytes
         GitRoot = $best.GitRoot
         SessionCwd = $best.SessionCwd
+        SessionCliVersion = $best.SessionCliVersion
         IsWeak = $false
         LaunchAgent = $agentA; ForceNew = (-not $resumeOk)
       }
@@ -1051,6 +1092,7 @@ function Build-Rows {
       RecentPrompts = $s.RecentPrompts; DiskBytes = $s.DiskBytes
       GitRoot = $s.GitRoot
       SessionCwd = $s.SessionCwd
+      SessionCliVersion = $s.SessionCliVersion
       IsWeak = $isWeak
       LaunchAgent = $agentC; ForceNew = (-not $resumeC)
     }
@@ -1604,7 +1646,7 @@ function Show-Screen {
   }
   Write-BoxRule -Border $bAgt
   if ($armRow) {
-    Write-BoxLine -Text 'type: agent number + Enter = that agent · Enter alone = (default) · q = cancel' -Fg White -Border $bAgt
+    Write-BoxLine -Text 'type: agent number + Enter = that agent · Enter = default · r = refresh · q = cancel' -Fg White -Border $bAgt
   } else {
     Write-BoxLine -Text 'idle — step 1 first: type a task number below; agents light up on demand' -Fg DarkGray -Border $bAgt
   }
@@ -1895,6 +1937,7 @@ function Start-CodexTab {
   param(
     [string]$Cwd,
     [string[]]$CodexArgs,
+    [string]$SessionCliVersion = '',
     [string]$Title = 'codex'
   )
   $exe = Find-AgentExe -Id 'codex'
@@ -1910,6 +1953,14 @@ function Start-CodexTab {
   if (-not (Test-Path -LiteralPath $Cwd)) {
     $script:StatusHint = "Path missing: $Cwd"
     return
+  }
+
+  if ($SessionCliVersion) {
+    $runtimeVersion = Get-CodexRuntimeVersion -Exe $exe
+    if (-not (Test-CodexResumeCompatible -RuntimeVersion $runtimeVersion -SessionVersion $SessionCliVersion)) {
+      $script:StatusHint = "Codex $runtimeVersion cannot resume a session written by $SessionCliVersion - update Codex CLI, press r, then retry"
+      return $false
+    }
   }
 
   # Inject -C <cwd> (root-level flag, must precede subcommands like resume)
@@ -2035,6 +2086,15 @@ function Get-InstalledAgentPeers {
   return @($script:AgentPeers)
 }
 
+function Reset-AgentDiscoveryCache {
+  # Re-run the external inventory. It merges the current process PATH with the
+  # latest persisted User/Machine PATH, so installers become visible even when
+  # this long-lived WezTerm process still owns an older environment block.
+  $script:AgentDefinitions = $null
+  $script:AgentPeers = $null
+  $script:CodexRuntimeVersions = @{}
+}
+
 function Invoke-AgentLaunch {
   # Launches $Agent on the row's project path. Resume only when the row carries a
   # session of that same agent; otherwise a fresh session starts on the path.
@@ -2049,7 +2109,7 @@ function Invoke-AgentLaunch {
     return (Start-KimiTab -Cwd $Launch -KimiArgs @() -Title $title)
   }
   if ($Agent -eq 'codex') {
-    if ($resume) { return (Start-CodexTab -Cwd $Launch -CodexArgs @('resume', $Row.Id) -Title $title) }
+    if ($resume) { return (Start-CodexTab -Cwd $Launch -CodexArgs @('resume', $Row.Id) -SessionCliVersion ([string]$Row.SessionCliVersion) -Title $title) }
     return (Start-CodexTab -Cwd $Launch -CodexArgs @() -Title $title)
   }
   if ($Agent -eq 'deepseek') {
@@ -2971,13 +3031,20 @@ while ($running) {
     for ($ii = 0; $ii -lt $peerIds.Count; $ii++) {
       if ($peerIds[$ii] -eq $dflt) { $defIdx = $ii + 1; break }
     }
-    Write-Host -NoNewline ("  agent 1-{0} (Enter = {1} {2}, q = cancel) " -f $peerIds.Count, $defIdx, $peerIds[$defIdx - 1]) -ForegroundColor Yellow
+    Write-Host -NoNewline ("  agent 1-{0} (Enter = {1} {2}, r = refresh, q = cancel) " -f $peerIds.Count, $defIdx, $peerIds[$defIdx - 1]) -ForegroundColor Yellow
     $line = Read-Host
     # L2-2: stdin EOF (redirected host, input exhausted) — leave the panel
     # cleanly instead of spinning on empty reads forever.
     if ($null -eq $line) { break }
     $line = ([string]$line).Trim()
     if ($line -eq '') { Complete-AgentPick -Agent $peerIds[$defIdx - 1]; continue }
+    if ($line -eq 'r' -or $line -eq 'R') {
+      Reset-AgentDiscoveryCache
+      $script:StatusHint = 'agent inventory refreshed from installed metadata and persisted PATH'
+      $script:RowsDirty = $true
+      $script:ScreenDirty = $true
+      continue
+    }
     if ($line -eq 'q' -or $line -eq 'Q') {
       $script:PendingRow = $null
       $script:PendingForceNew = $false
@@ -2991,7 +3058,7 @@ while ($running) {
       Complete-AgentPick -Agent $peerIds[$pick - 1]
       continue
     }
-    $script:StatusHint = ('no such agent — Enter = default, 1-' + $peerIds.Count + ', q = cancel')
+    $script:StatusHint = ('no such agent — Enter = default, 1-' + $peerIds.Count + ', r = refresh, q = cancel')
     $script:ScreenDirty = $true
     continue
   }
@@ -3010,8 +3077,8 @@ while ($running) {
   }
   if ($line -eq 'c' -or $line -eq 'C') { Invoke-NewTaskWizard; $script:ScreenDirty = $true; continue }
   if ($line -eq 'r' -or $line -eq 'R') {
-    $script:AgentDefinitions = $null
-    $script:AgentPeers = $null
+    Reset-AgentDiscoveryCache
+    $script:StatusHint = 'agent inventory refreshed from installed metadata and persisted PATH'
     $script:RowsDirty = $true
     continue
   }  # D-016: re-read metadata + local registration in the same Init process

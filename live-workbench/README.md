@@ -5,8 +5,9 @@
 ## 组成
 
 - `wezterm.lua`：最小入口，加载 `workbench/` 模块。
-- `workbench/agent-discovery.ps1`：开放式本机 Agent 探测；不使用产品白名单。
+- `workbench/agent-discovery.ps1`：开放式本机 Agent 探测；合并进程与持久化 PATH，静态识别缺少包清单的用户级独立 CLI，并缓存文件指纹；不使用产品白名单、不执行候选程序。
 - `workbench/bootstrap.ps1`：Init 任务面板、4 步项目创建、会话索引与统一真实读取进度。
+- Codex 专属续聊适配器会保留会话写入 CLI 版本；运行时更旧则留在 Init 提示升级，不产生失败页签。
 - `workbench/desk.lua`：项目身份、路径门禁、动态 Agent 进程识别和安全绑定写入。
 - `workbench/launch.lua`：按发现到的准确可执行路径启动 Agent。
 - `workbench/layouts.lua`：受门禁保护的单窗格与三栏布局。

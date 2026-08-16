@@ -4,22 +4,40 @@
   Discover locally installed AI agent CLIs without an agent-name whitelist.
 
 .DESCRIPTION
-  Discovery is metadata-driven and side-effect free: no candidate executable is
-  launched. Sources are PATH-visible npm/Python package metadata, executable
-  version metadata, *.wz-agent.json manifests, and the optional local TSV
-  override. The result is safe to call on every Init cold start.
+  Discovery is metadata-driven and never launches a candidate executable.
+  Sources are live and persisted PATH, npm/Python package metadata, executable
+  version/static capability metadata, *.wz-agent.json manifests, and the
+  optional local TSV override. Static binary verdicts use a bounded fingerprint
+  cache, so the result is safe and fast to call on every Init cold start.
 #>
 [CmdletBinding()]
 param(
   [switch]$AsJson,
   [switch]$AsTsv,
-  [string]$WorkbenchDir = $PSScriptRoot
+  [string]$WorkbenchDir = $PSScriptRoot,
+  [switch]$ProcessPathOnly,
+  [string]$UserPathOverride
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
 $script:WzCommandCache = @{}
 $script:WzMaxJsonBytes = 1MB
 $script:WzMaxTextChars = 131072
+$script:WzMaxBinaryBytes = 512MB
+$script:WzBinaryScanBudget = 768MB
+$script:WzBinaryBytesScanned = 0L
+$script:WzSearchPathDirectories = @()
+$script:WzPersistedUserPathKeys = @{}
+$script:WzUserPathOverrideProvided = $PSBoundParameters.ContainsKey('UserPathOverride')
+$script:WzEffectiveProcessPathOnly = $ProcessPathOnly -or ([string]$env:WZ_AGENT_DISCOVERY_PROCESS_PATH_ONLY -eq '1')
+$script:WzBinaryCacheLoaded = $false
+$script:WzBinaryCacheDirty = $false
+$script:WzBinaryCache = @{}
+$script:WzBinaryCachePath = if ($env:LOCALAPPDATA) {
+  Join-Path $env:LOCALAPPDATA 'WZ_AiStarCube\agent-discovery-cache.json'
+} else {
+  Join-Path $WorkbenchDir 'agent-discovery-cache.json'
+}
 
 function ConvertTo-WzSafeField {
   param(
@@ -116,6 +134,25 @@ function Resolve-WzAgentCommand {
         return $resolved
       }
     } catch {}
+    # The host process can keep an old PATH after an installer updates the
+    # persisted User/Machine PATH. Search the freshly read directories without
+    # mutating this process environment.
+    if (-not [System.IO.Path]::IsPathRooted($name)) {
+      $extensions = @('')
+      if (-not [System.IO.Path]::GetExtension($name)) {
+        $extensions = @('.ps1', '.cmd', '.bat', '.exe', '.com', '')
+      }
+      foreach ($dir in @($script:WzSearchPathDirectories)) {
+        foreach ($extension in $extensions) {
+          $candidate = Join-Path $dir ($name + $extension)
+          if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            try { $candidate = [System.IO.Path]::GetFullPath($candidate) } catch {}
+            $script:WzCommandCache[$cacheKey] = $candidate
+            return $candidate
+          }
+        }
+      }
+    }
     $script:WzCommandCache[$cacheKey] = ''
   }
   return $null
@@ -124,14 +161,122 @@ function Resolve-WzAgentCommand {
 function Get-WzPathDirectories {
   $seen = @{}
   $out = New-Object System.Collections.Generic.List[string]
-  foreach ($raw in (([string]$env:PATH) -split ';')) {
-    $dir = ([string]$raw).Trim().Trim('"').TrimEnd('\', '/')
-    if (-not $dir -or $dir -match '^\\\\' -or -not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
-    try { $dir = [System.IO.Path]::GetFullPath($dir) } catch {}
-    $key = $dir.ToLowerInvariant()
-    if (-not $seen.ContainsKey($key)) { $seen[$key] = $true; [void]$out.Add($dir) }
+  $sources = New-Object System.Collections.Generic.List[object]
+  [void]$sources.Add([pscustomobject]@{ Kind = 'process'; Value = [string]$env:PATH })
+  if (-not $script:WzEffectiveProcessPathOnly) {
+    $userPath = if ($script:WzUserPathOverrideProvided) {
+      [string]$UserPathOverride
+    } else {
+      [string][Environment]::GetEnvironmentVariable('Path', 'User')
+    }
+    [void]$sources.Add([pscustomobject]@{ Kind = 'user'; Value = $userPath })
+    [void]$sources.Add([pscustomobject]@{ Kind = 'machine'; Value = [string][Environment]::GetEnvironmentVariable('Path', 'Machine') })
+  }
+  foreach ($source in $sources) {
+    foreach ($raw in (([string]$source.Value) -split ';')) {
+      $dir = [Environment]::ExpandEnvironmentVariables(([string]$raw).Trim().Trim('"')).TrimEnd('\', '/')
+      if (-not $dir -or $dir -match '^\\\\' -or -not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
+      try { $dir = [System.IO.Path]::GetFullPath($dir) } catch {}
+      $key = $dir.ToLowerInvariant()
+      if ([string]$source.Kind -eq 'user') { $script:WzPersistedUserPathKeys[$key] = $true }
+      if (-not $seen.ContainsKey($key)) { $seen[$key] = $true; [void]$out.Add($dir) }
+    }
   }
   return $out.ToArray()
+}
+
+function Initialize-WzBinaryCache {
+  if ($script:WzBinaryCacheLoaded) { return }
+  $script:WzBinaryCacheLoaded = $true
+  $cache = Read-WzJsonFile -Path $script:WzBinaryCachePath
+  if ($null -eq $cache -or -not $cache.entries) { return }
+  foreach ($entry in @($cache.entries)) {
+    $path = [string]$entry.path
+    if (-not $path) { continue }
+    $script:WzBinaryCache[$path.ToLowerInvariant()] = [pscustomobject]@{
+      Path = $path
+      Length = [long]$entry.length
+      LastWriteUtcTicks = [long]$entry.lastWriteUtcTicks
+      Detected = [bool]$entry.detected
+    }
+  }
+}
+
+function Save-WzBinaryCache {
+  if (-not $script:WzBinaryCacheDirty) { return }
+  $temp = $null
+  try {
+    $parent = Split-Path -Parent $script:WzBinaryCachePath
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    $entries = @($script:WzBinaryCache.Values | Sort-Object Path | Select-Object -First 128 | ForEach-Object {
+      [ordered]@{ path = $_.Path; length = $_.Length; lastWriteUtcTicks = $_.LastWriteUtcTicks; detected = $_.Detected }
+    })
+    $json = ConvertTo-Json -InputObject ([ordered]@{ version = 1; entries = $entries }) -Depth 4 -Compress
+    $temp = $script:WzBinaryCachePath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    [System.IO.File]::WriteAllText($temp, $json, (New-Object System.Text.UTF8Encoding($false)))
+    if (Test-Path -LiteralPath $script:WzBinaryCachePath -PathType Leaf) {
+      [System.IO.File]::Replace($temp, $script:WzBinaryCachePath, $null, $true)
+    } else {
+      [System.IO.File]::Move($temp, $script:WzBinaryCachePath)
+    }
+    $script:WzBinaryCacheDirty = $false
+  } catch {}
+  finally {
+    if ($temp -and (Test-Path -LiteralPath $temp -PathType Leaf)) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+  }
+}
+
+function Test-WzStaticBinaryAgentMetadata {
+  param([System.IO.FileInfo]$File)
+  if (-not $File -or $File.Length -le 0 -or $File.Length -gt $script:WzMaxBinaryBytes) { return $false }
+  Initialize-WzBinaryCache
+  $key = $File.FullName.ToLowerInvariant()
+  if ($script:WzBinaryCache.ContainsKey($key)) {
+    $cached = $script:WzBinaryCache[$key]
+    if ([long]$cached.Length -eq [long]$File.Length -and [long]$cached.LastWriteUtcTicks -eq [long]$File.LastWriteTimeUtc.Ticks) {
+      return [bool]$cached.Detected
+    }
+  }
+  if (($script:WzBinaryBytesScanned + $File.Length) -gt $script:WzBinaryScanBudget) { return $false }
+  $script:WzBinaryBytesScanned += $File.Length
+  $patterns = @('coding agent', 'ai agent', 'agentic coding', 'agentic software', 'ai coding', 'code assistant', 'terminal assistant')
+  $detected = $false
+  $stream = $null
+  try {
+    $stream = [System.IO.File]::Open($File.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    $buffer = New-Object byte[] (4MB)
+    $encoding = [System.Text.Encoding]::ASCII
+    $carry = ''
+    while (($count = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+      $text = $carry + $encoding.GetString($buffer, 0, $count)
+      foreach ($pattern in $patterns) {
+        if ($text.IndexOf($pattern, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $detected = $true; break }
+      }
+      if ($detected) { break }
+      $carry = if ($text.Length -gt 32) { $text.Substring($text.Length - 32) } else { $text }
+    }
+  } catch { $detected = $false }
+  finally { if ($stream) { $stream.Dispose() } }
+  $script:WzBinaryCache[$key] = [pscustomobject]@{
+    Path = $File.FullName
+    Length = [long]$File.Length
+    LastWriteUtcTicks = [long]$File.LastWriteTimeUtc.Ticks
+    Detected = [bool]$detected
+  }
+  $script:WzBinaryCacheDirty = $true
+  return $detected
+}
+
+function Get-WzDedicatedBinaryScore {
+  param([System.IO.FileInfo]$File)
+  if (-not $File -or -not $File.Directory -or $File.Directory.Name -ine 'bin') { return 0 }
+  $appName = ([string]$File.Directory.Parent.Name).TrimStart('.').ToLowerInvariant()
+  $commandName = ([string]$File.BaseName).ToLowerInvariant()
+  if (-not $appName -or -not $commandName) { return 0 }
+  if ($appName -eq $commandName) { return 4 }
+  if ($appName.StartsWith($commandName + '-') -or $appName.StartsWith($commandName + '_')) { return 3 }
+  if ($commandName.StartsWith($appName + '-') -or $commandName.StartsWith($appName + '_')) { return 2 }
+  return 0
 }
 
 function Get-WzNpmPackageFiles {
@@ -222,6 +367,7 @@ function Get-WzInstalledAgents {
   }
 
   $pathDirs = @(Get-WzPathDirectories)
+  $script:WzSearchPathDirectories = @($pathDirs)
 
   # npm: package metadata supplies both capability evidence and exported bin(s).
   foreach ($packageFile in @(Get-WzNpmPackageFiles -PathDirs $pathDirs)) {
@@ -305,6 +451,50 @@ function Get-WzInstalledAgents {
     }
   }
 
+  # Some modern standalone Agent installers place a self-contained EXE in a
+  # dedicated user PATH directory but ship no package manifest and either no
+  # Windows version resource or only the embedded runtime's generic resource.
+  # Inspect only the likely primary binary of such user-owned app/bin roots.
+  # This is a static byte scan: candidates are never executed, the vocabulary
+  # describes capabilities rather than products, and fingerprints are cached.
+  $userRoots = @()
+  foreach ($rawRoot in @($env:USERPROFILE, $env:LOCALAPPDATA, $env:APPDATA)) {
+    if (-not $rawRoot) { continue }
+    try { $userRoots += [System.IO.Path]::GetFullPath([string]$rawRoot).TrimEnd('\') } catch { $userRoots += [string]$rawRoot }
+  }
+  foreach ($dir in $pathDirs) {
+    $dirKey = $dir.ToLowerInvariant()
+    if (-not $script:WzPersistedUserPathKeys.ContainsKey($dirKey)) { continue }
+    $isUserOwned = $false
+    foreach ($userRoot in $userRoots) {
+      if ($userRoot -and ($dir.Equals($userRoot, [System.StringComparison]::OrdinalIgnoreCase) -or $dir.StartsWith($userRoot + '\', [System.StringComparison]::OrdinalIgnoreCase))) {
+        $isUserOwned = $true
+        break
+      }
+    }
+    if (-not $isUserOwned -or (Split-Path -Leaf $dir) -ine 'bin') { continue }
+    $eligible = @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue | Where-Object {
+      $_.Extension -in @('.exe', '.cmd', '.bat', '.ps1')
+    } | ForEach-Object {
+      $score = Get-WzDedicatedBinaryScore -File $_
+      if ($score -gt 0) { [pscustomobject]@{ File = $_; Score = $score } }
+    })
+    foreach ($group in @($eligible | Group-Object { ([string]$_.File.Length + '|' + [string]$_.File.LastWriteTimeUtc.Ticks) })) {
+      $primary = @($group.Group | Sort-Object @{ Expression = 'Score'; Descending = $true }, @{ Expression = { $_.File.Name.Length }; Descending = $false }, @{ Expression = { $_.File.Name }; Descending = $false } | Select-Object -First 1)
+      if ($primary.Count -eq 0) { continue }
+      $exeFile = [System.IO.FileInfo]$primary[0].File
+      $hasCapability = if ($exeFile.Extension -ieq '.exe') {
+        Test-WzStaticBinaryAgentMetadata -File $exeFile
+      } else {
+        $text = Read-WzTextPrefix -Path $exeFile.FullName
+        ($null -ne $text -and (Test-WzAgentMetadata $text))
+      }
+      if ($hasCapability) {
+        Add-WzCandidate -Id $exeFile.BaseName -Label (ConvertTo-WzAgentLabel $exeFile.BaseName) -Exe $exeFile.FullName -Source 'user-path:static-capability'
+      }
+    }
+  }
+
   # Explicit registry is the escape hatch for a silent standalone binary. The
   # shipped file contains no products; local rows may use any id/command.
   foreach ($registry in @((Join-Path $Root 'agent-registry.tsv'), (Join-Path $Root 'agent-registry.local.tsv'))) {
@@ -321,6 +511,7 @@ function Get-WzInstalledAgents {
     }
   }
 
+  Save-WzBinaryCache
   return @($found.Values | Sort-Object Label, Id)
 }
 

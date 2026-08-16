@@ -8,6 +8,7 @@ $env:PATH = 'C:\Windows\System32;C:\Windows\System32\WindowsPowerShell\v1.0'
 $env:USERPROFILE = $fake
 $env:APPDATA = Join-Path $fake 'AppData\Roaming'
 $env:LOCALAPPDATA = Join-Path $fake 'AppData\Local'
+$env:WZ_AGENT_DISCOVERY_PROCESS_PATH_ONLY = '1'
 # Simulate Install-WZ having bound one project on the fresh device
 $wb = Join-Path $fake '.config\wezterm\workbench'
 New-Item -ItemType Directory -Force -Path $wb | Out-Null

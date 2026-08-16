@@ -97,7 +97,7 @@ Binding table on machine: `workbench\desk-roots.tsv`. Marker: `<project>\.wz-pro
 
 #### 2 · Agent 开放探测与可选续聊适配器（D-016）
 
-候选列表**不写死产品类型**。每次 Init 冷启动（或面板内 `r`）由 `agent-discovery.ps1` 重新枚举：PATH 可见的 npm/Python 包元数据、可执行文件版本元数据、`*.wz-agent.json` 自描述文件，以及安装器永久保留的 `agent-registry.local.tsv`。探测过程不执行候选程序；任何新产品只要安装包声明自己是 AI/coding agent 并导出 CLI，就自动进入 Init/F3/F6。完全没有元数据的独立二进制，可在本地 TSV 写 `id<TAB>label<TAB>command-or-absolute-path`（第三列支持 `|` 分隔别名），同样无需改源码。仓库自带 `agent-registry.tsv` 只有协议说明，不带产品白名单。
+候选列表**不写死产品类型**。每次 Init 冷启动（或两步中的任一步按 `r`）由 `agent-discovery.ps1` 重新枚举，并合并宿主进程 PATH 与最新用户/系统持久化 PATH，因此安装器更新 PATH 后无需重启整个 WezTerm。自动证据包括 npm/Python 包元数据、可执行文件版本元数据、`*.wz-agent.json`；对于没有包清单/版本资源、安装在用户级专属 `app\bin` 的独立 EXE，则以受字节上限约束的静态能力词扫描识别，结果按路径+大小+修改时间缓存，相同负载别名折叠到与应用目录最匹配的主命令。探测过程从不执行候选程序，判断词只描述 AI/coding-agent 能力，不含产品名。仍完全静默的独立二进制可在本地 TSV 写 `id<TAB>label<TAB>command-or-absolute-path`（第三列支持 `|` 分隔别名），同样无需改源码。仓库自带 `agent-registry.tsv` 只有协议说明，不带产品白名单。
 
 下表只记录已有的**续聊参数适配器**，不是发现清单；没有专属适配器的新 Agent 仍可等权展示并以项目 cwd 正常新开：
 
@@ -105,7 +105,7 @@ Binding table on machine: `workbench\desk-roots.tsv`. Marker: `<project>\.wz-pro
 |---|---|---|---|
 | `grok` | `grok --cwd <path>`（F-005） | Grok 自有 resume | 现有一等行为，不动 |
 | `kimi` | **无 `--cwd`**；由 `wezterm cli spawn --cwd <path> -- kimi` 设定进程 cwd 后启动（F-011） | `kimi --continue`（续当前目录最近会话；会话按工作目录分组存于 `~/.kimi-code/sessions/`） | 本设计的一等公民 |
-| `codex` | `codex -C/--cd <path>`，或 spawn 设定进程 cwd（F-012） | `codex resume --last`（续最近）/ `codex resume <id>`（picker 按 cwd 过滤）；会话存 `~/.codex/sessions/` | WinGet `.cmd` 垫片须经 PowerShell host 或解析真实 exe（F-012） |
+| `codex` | `codex -C/--cd <path>`，或 spawn 设定进程 cwd（F-012） | `codex resume --last`（续最近）/ `codex resume <id>`（picker 按 cwd 过滤）；会话存 `~/.codex/sessions/` | WinGet `.cmd` 垫片须经 PowerShell host；续聊前比较运行时与 `session_meta.payload.cli_version`，旧读取器只提示升级、不 spawn 失败页签 |
 | `deepseek` | **无 `--cwd`**；spawn 进程 cwd = 项目身份（kimi 同款，F-014） | `deepseek --continue`/`--resume`（续当前目录已存会话；存于 `~/.deepseek-cli/sessions/<sha256(cwd)[0:16]>.json`，REPL 进入时亦自动恢复） | 社区版 `@kavienw/deepseek-cli`（npm 全局，`.cmd` 垫片经 PowerShell host）；需 DeepSeek API Key，首启在页签内交互录入并自动保存 |
 
 HUD/接管检测：按窗格前台进程名识别 agent（grok / kimi / codex / deepseek），识别不出视为普通 shell。
@@ -204,7 +204,7 @@ Agent 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。`open-projec
 | 任务初始化面板 | **冷启动+新标签统一** | `default_prog`/Ctrl+Shift+T → `bootstrap.ps1` 表格；纯 Shell=Init 面板按 `s`（或 launch menu 的 PowerShell 项）；分屏仍 PS；`no-bootstrap` 可关 |
 | Init 面板卡顿 | **已改 live** | 原为每次按键全量重扫 grok/kimi/codex 会话目录；现行缓存 + 脏标记（`$script:RowsDirty`），仅 `r`/ `a`/ 动作后重建，j/k/数字/Enter 纯渲染缓存行 |
 | Init 列表 Act\*/排序 | **已下线/已改** | Act\* 列与整条 marks 管线（缓存+后台刷新器+空闲轮询）已**整体拆除**（用户 2026-08-13：优化不出效果，干掉）；列表改为 `# DateTime Tag Project Path Model Title`，Path 列头部保留、超长尾端 `~` 截断；bound 层按最近活跃倒序 |
-| Init 启动与 agent 解耦 | **已改 live（同屏两区两步 + 开放探测）** | 本机通过元数据/manifest/本地兜底注册探测到的全部 Agent 常驻「2 AGENT」区，不设产品白名单；冷启动必重扫，`r` 可在原进程重扫。`wz>` 选任务 → `agent>` 选 Agent，取消零 spawn；R1–R6 不变。COMMAND 采用三列固定单元格，`c/s/q` 等后续入口纵向对齐；Grok 专属 Dashboard 已从面板和启动菜单清除。屏幕仅在状态转换时重绘；亮黄仍只代表可输入项（D-013）。 |
+| Init 启动与 agent 解耦 | **已改 live（同屏两区两步 + 开放探测）** | 本机通过包/清单/版本资源/用户级独立 CLI 静态能力证据/本地兜底注册探测到的全部 Agent 常驻「2 AGENT」区，不设产品白名单；冷启动必重扫，`r` 在任务步和 Agent 选择步都可重读持久化 PATH。`wz>` 选任务 → `agent>` 选 Agent，取消零 spawn；R1–R6 不变。COMMAND 采用三列固定单元格，`c/s/q` 等后续入口纵向对齐；Grok 专属 Dashboard 已从面板和启动菜单清除。屏幕仅在状态转换时重绘；亮黄仍只代表可输入项（D-013）。 |
 | 读取/启动进度语义 | **D-017 已加固** | 文件与会话读取先枚举一次并共享一个全局计数轴，完成合并和发布后才到 100%；外部 Agent 就绪时长不可知，启动阶段改用不定进度动画，不显示虚假百分比。 |
 
 ### Known residual pain (workbench backlog seeds)
@@ -270,7 +270,7 @@ Agent 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。`open-projec
 | B1 | F6 三栏 | 在绑定的强路径任务上 F6 → 先出**全量已装 agent 平权选择器**（默认 = 第三列路由排第一，↑↓+Enter），确认后开「agent + Shell + 监视」三栏；Esc 取消零 spawn；未绑定页签只弹 toast |
 | B2 | F7 同根 | 先点 AI 窗格再 F7 → Explorer 根 = 页签 DESK / agent 启动 cwd |
 | B3 | F1 速查 | cheatsheet 面板开/关（F1 被 Windows 吞时面板内 q 可关） |
-| B4 | Init 两步流（静态屏 + 组合加速） | `wz>` 输任务号（或 `n<号>` 新会话；两位数 `<任务><agent>` 一次直启，默认视图 ≤9 行）→ 2 AGENT 区待命 → `agent>` 输模型号 / Enter=默认 / q 取消零 spawn；AGENT 区等权展示全部开放探测结果；COMMAND 三列固定对齐且无产品专属 `d`；屏幕只在状态转换时重绘一次 |
+| B4 | Init 两步流（静态屏 + 组合加速） | `wz>` 输任务号（或 `n<号>` 新会话；两位数 `<任务><agent>` 一次直启，默认视图 ≤9 行）→ 2 AGENT 区待命 → `agent>` 输模型号 / Enter=默认 / `r` 即时重探测 / q 取消零 spawn；AGENT 区等权展示全部开放探测结果；COMMAND 三列固定对齐且无产品专属 `d`；屏幕只在状态转换时重绘一次 |
 | B5 | 重载 | F5（或 Ctrl+Shift+R）toast「配置已重载」 |
 | B6 | 不抢 agent | F2、`Ctrl+;` 仍归 agent CLI；工作台键仅 WezTerm 聚焦生效；**无 Leader 层** |
 
@@ -279,7 +279,7 @@ Agent 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。`open-projec
 | # | 项 | 通过标准 |
 |---|---|---|
 | C1 | open-project | `open-project.ps1` 用 wezterm spawn 页签，不叠独立 OS 窗 |
-| C2 | Doctor | `Install-WZ.ps1 -DoctorOnly` 与 Init 使用同一开放探测器；≥1 个自描述/本地注册 Agent 即通过 |
+| C2 | Doctor | `Install-WZ.ps1 -DoctorOnly` 与 Init 使用同一开放探测器；≥1 个由开放元数据/静态能力/本地注册确认的 Agent 即通过 |
 | C3 | 纯 Shell 逃生 | Init 面板按 `s` 可得不走任务流的纯 PowerShell 页签 |
 | C4 | 快照同步 | 改门禁/键位后 `live-workbench/` 与 `~\.config\wezterm` 无关键契约漂移（md5 一致 + BOM 断言过验证器） |
 

@@ -76,4 +76,4 @@
 | D-017 | Windows-only 四原则蒸馏 + 真实读取进度/不定启动动画 + 对抗回归 + `_win` 发布边界 | Present |
 
 ## Next Action
-D-017 代码加固与自动回归进行中；完成本机安装同步、真配置加载和哈希验收后，提交并推送，再把 GitHub 仓库重命名为 `WZ_AiStarCube_win` 并复验新地址。
+用户重开 Init，确认开放探测区列出本机 Agy/Codex/Grok/Kimi，并重试已报告的 Codex 会话；工作流已补持久化 PATH 重读、用户级独立 CLI 静态能力探测及 resume 版本兼容门禁，后续仅按真实交互反馈增量修正。

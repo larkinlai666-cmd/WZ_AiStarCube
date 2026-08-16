@@ -21,7 +21,7 @@ powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1
 | 安装中断留下半份配置 | 同目录临时文件、SHA-256 校验、原子替换；安装前备份旧配置 |
 | 重装覆盖私人项目清单 | 保留已存在的 `desk-roots.tsv`、收藏和本地 Agent 注册表 |
 | 弱路径被绑定为正式项目 | 拒绝用户目录、常用用户文件夹、AppData、隐藏工具目录、系统/临时目录和盘符根目录 |
-| Agent 类型写死 | PATH、npm、Python、清单和本地注册表均按元数据/能力发现，不以品牌白名单筛选 |
+| Agent 类型写死 | 进程+持久化 PATH、npm、Python、清单、用户级独立 EXE 静态能力和本地注册表均按结构/能力发现，不以品牌白名单筛选 |
 | 可执行路径被同名命令劫持 | 启动时使用发现记录中的准确绝对路径，并在生成窗格前再次验证 |
 | 恶意或异常元数据 | 限制 JSON/文本读取大小，清除控制字符，限制字段长度，校验 ID 和可执行文件 |
 | Agent 在选择后被卸载 | 启动前重新检查；失败时停止，不静默退回普通 shell |
@@ -50,7 +50,7 @@ powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1 -DoctorOnly
 手工烟测：
 
 1. WezTerm 打开后出现 Init 面板。
-2. `r` 重新探测本机 Agent，新安装且能自描述的 Agent 出现在同一备选列表。
+2. `r` 在任务步或 Agent 选择步重新探测本机 Agent；即使宿主进程 PATH 尚未更新，新写入持久化 PATH 且具备开放能力证据的 Agent 也出现在同一备选列表。
 3. `c` 创建项目时只有 4 步，Agent/CLI 不分离，手填父目录只显示 `[0]`。
 4. `F6` 只在已绑定的强项目路径上创建三栏。
 5. `F7` 的文件根目录与任务路径一致。

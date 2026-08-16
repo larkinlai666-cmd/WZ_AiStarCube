@@ -14,8 +14,8 @@
 - Capsule: CONTEXT.md
 - Coverage: CONTEXT.md
 - Blockers: none
-- Next: User live acceptance of the installed Windows workbench; continue only from observed interaction gaps.
-- Updated: 2026-08-16T06:43:57Z
+- Next: User live acceptance: confirm Init now lists Agy, Codex, Grok and Kimi, then retry the reported Codex resume row.
+- Updated: 2026-08-16T15:46:41Z
 - Device: SK-20240507HWFH
 
 ## Objective

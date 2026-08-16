@@ -9,6 +9,7 @@ $tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimE
 $testRoot = Join-Path $tempBase ('wz-agent-discovery-' + [guid]::NewGuid().ToString('N'))
 $oldPath = $env:PATH
 $oldAppData = $env:APPDATA
+$oldLocalAppData = $env:LOCALAPPDATA
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 $powershellExe = Join-Path $PSHOME 'powershell.exe'
 
@@ -53,7 +54,8 @@ try {
 
   $env:PATH = $bin
   $env:APPDATA = Join-Path $testRoot 'isolated-appdata'
-  $json = & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $discoveryPath -WorkbenchDir $workbench -AsJson
+  $env:LOCALAPPDATA = Join-Path $testRoot 'isolated-localappdata'
+  $json = & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $discoveryPath -WorkbenchDir $workbench -AsJson -ProcessPathOnly
   Assert-Wz ($LASTEXITCODE -eq 0) 'open discovery exits cleanly'
   $rows = @()
   foreach ($item in (ConvertFrom-Json -InputObject ($json -join [Environment]::NewLine))) { $rows += $item }
@@ -67,6 +69,47 @@ try {
   Assert-Wz (([string]$nova[0].Label) -notmatch '[\x00-\x1F\x7F]') 'manifest labels cannot inject terminal control characters'
   Assert-Wz (@($rows | Where-Object { $_.Source -like '*oversized*' }).Count -eq 0) 'oversized JSON metadata is ignored'
 
+  # A stale host process must still see newly persisted user-PATH installs.
+  # The fixture deliberately has no package/manifest/version metadata and is
+  # not a runnable PE; discovery must use static capability evidence only.
+  $persistedApp = Join-Path $testRoot 'nebula-code'
+  $persistedBin = Join-Path $persistedApp 'bin'
+  New-Item -ItemType Directory -Force -Path $persistedBin | Out-Null
+  $primaryExe = Join-Path $persistedBin 'nebula.exe'
+  $aliasExe = Join-Path $persistedBin 'agent.exe'
+  $binaryFixture = [System.Text.Encoding]::ASCII.GetBytes("MZ`0fixture payload: an interactive coding agent for local projects`0")
+  [System.IO.File]::WriteAllBytes($primaryExe, $binaryFixture)
+  [System.IO.File]::WriteAllBytes($aliasExe, $binaryFixture)
+  $sameStamp = [datetime]::UtcNow.AddMinutes(-1)
+  (Get-Item -LiteralPath $primaryExe).LastWriteTimeUtc = $sameStamp
+  (Get-Item -LiteralPath $aliasExe).LastWriteTimeUtc = $sameStamp
+
+  $staleBin = Join-Path $testRoot 'stale-process-bin'
+  New-Item -ItemType Directory -Force -Path $staleBin | Out-Null
+  $env:PATH = $staleBin
+  $persistedJson = & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $discoveryPath -WorkbenchDir $workbench -AsJson -UserPathOverride $persistedBin
+  Assert-Wz ($LASTEXITCODE -eq 0) 'persisted user-PATH discovery exits cleanly with a stale process PATH'
+  $persistedRows = @()
+  foreach ($item in (ConvertFrom-Json -InputObject ($persistedJson -join [Environment]::NewLine))) { $persistedRows += $item }
+  $nebula = @($persistedRows | Where-Object { $_.Id -eq 'nebula' })
+  Assert-Wz ($nebula.Count -eq 1) 'an arbitrary standalone Agent is discovered from persisted user PATH without a product list'
+  Assert-Wz ([string]$nebula[0].Source -eq 'user-path:static-capability') 'standalone discovery reports its generic static-capability source'
+  Assert-Wz (@($persistedRows | Where-Object { $_.Id -eq 'agent' }).Count -eq 0) 'same-payload aliases collapse to the app-matching primary command'
+  $cachePath = Join-Path $env:LOCALAPPDATA 'WZ_AiStarCube\agent-discovery-cache.json'
+  Assert-Wz (Test-Path -LiteralPath $cachePath) 'standalone scan writes a bounded fingerprint cache'
+
+  # Updating a CLI invalidates the stat fingerprint and atomically replaces the
+  # cache without leaving a torn temporary file behind.
+  $updatedFixture = [System.Text.Encoding]::ASCII.GetBytes("MZ`0updated fixture payload: an interactive coding agent for local projects`0")
+  [System.IO.File]::WriteAllBytes($primaryExe, $updatedFixture)
+  [System.IO.File]::WriteAllBytes($aliasExe, $updatedFixture)
+  $newStamp = $sameStamp.AddSeconds(10)
+  (Get-Item -LiteralPath $primaryExe).LastWriteTimeUtc = $newStamp
+  (Get-Item -LiteralPath $aliasExe).LastWriteTimeUtc = $newStamp
+  $updatedJson = & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $discoveryPath -WorkbenchDir $workbench -AsJson -UserPathOverride $persistedBin
+  Assert-Wz ($LASTEXITCODE -eq 0 -and (($updatedJson -join '') -match 'nebula')) 'updated standalone CLI invalidates and refreshes its cached verdict'
+  Assert-Wz (@(Get-ChildItem -LiteralPath (Split-Path -Parent $cachePath) -Filter '*.tmp' -File -ErrorAction SilentlyContinue).Count -eq 0) 'atomic cache replacement leaves no temporary file'
+
   # A truly empty environment must stay empty; no historical product is injected.
   $emptyRoot = Join-Path $testRoot 'empty'
   $emptyBin = Join-Path $emptyRoot 'bin'
@@ -75,7 +118,7 @@ try {
   [System.IO.File]::WriteAllText((Join-Path $emptyWorkbench 'agent-registry.tsv'), '# none', $utf8)
   $env:PATH = $emptyBin
   $env:APPDATA = Join-Path $emptyRoot 'appdata'
-  $emptyJson = & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $discoveryPath -WorkbenchDir $emptyWorkbench -AsJson
+  $emptyJson = & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $discoveryPath -WorkbenchDir $emptyWorkbench -AsJson -ProcessPathOnly
   Assert-Wz ($LASTEXITCODE -eq 0) 'zero-Agent discovery exits cleanly'
   $emptyRows = @()
   if (-not [string]::IsNullOrWhiteSpace(($emptyJson -join ''))) {
@@ -88,6 +131,7 @@ try {
 finally {
   $env:PATH = $oldPath
   $env:APPDATA = $oldAppData
+  $env:LOCALAPPDATA = $oldLocalAppData
   $resolved = [System.IO.Path]::GetFullPath($testRoot)
   if ($resolved.StartsWith($tempBase, [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $resolved)) {
     Remove-Item -LiteralPath $resolved -Recurse -Force

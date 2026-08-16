@@ -13,6 +13,7 @@ if (-not $m.Success) { throw 'Read-CodexSessionSummaries not found in live boots
 function Test-WeakPath { param([string]$Cwd) return $false }
 function Resolve-ProjectName { param([string]$Path, [string]$FallbackLeaf = '') return $FallbackLeaf }
 function Get-SessionDiskBytes { param([string]$SessionDir) return [long]0 }
+function Step-LoadingPlan { param([string]$Label) }
 
 . ([ScriptBlock]::Create($m.Value))
 
@@ -30,6 +31,7 @@ function Assert([bool]$cond, [string]$msg) {
 # Ground truth: parse first line of every rollout file ourselves
 $root = Join-Path $env:USERPROFILE '.codex\sessions'
 $truth = @{}
+$truthVersion = @{}
 foreach ($f in (Get-ChildItem -LiteralPath $root -Recurse -File -Filter 'rollout-*.jsonl')) {
   $first = Get-Content -LiteralPath $f.FullName -TotalCount 1 -Encoding UTF8
   if (-not $first) { continue }
@@ -37,6 +39,7 @@ foreach ($f in (Get-ChildItem -LiteralPath $root -Recurse -File -Filter 'rollout
   if ($j.type -ne 'session_meta' -or -not $j.payload) { continue }
   if (-not $j.payload.id -or -not $j.payload.cwd) { continue }
   $truth[[string]$j.payload.id] = ([string]$j.payload.cwd).Trim().Replace('/', '\').TrimEnd('\')
+  $truthVersion[[string]$j.payload.id] = $(if ($j.payload.cli_version) { [string]$j.payload.cli_version } else { '' })
 }
 Write-Output ("rollout files with session_meta+cwd: " + $truth.Count)
 
@@ -44,17 +47,19 @@ Assert ($rows.Count -gt 0) 'at least one codex session listed'
 Assert ($rows.Count -le $truth.Count) 'rows never exceed sessions on disk'
 
 # Every row: shape + cwd normalization + id/cwd match ground truth
-$allShape = $true; $allCwd = $true; $allMatch = $true; $allTime = $true
+$allShape = $true; $allCwd = $true; $allMatch = $true; $allTime = $true; $allVersion = $true
 foreach ($r in $rows) {
   if ($r.Agent -ne 'codex' -or $r.Kind -ne 'session') { $allShape = $false }
   if ($r.Cwd -match '/' -or $r.Cwd.EndsWith('\')) { $allCwd = $false }
   if (-not $truth.ContainsKey($r.Id) -or $truth[$r.Id] -ne $r.Cwd) { $allMatch = $false }
   if (-not ($r.Updated -is [DateTime])) { $allTime = $false }
+  if (-not $truthVersion.ContainsKey($r.Id) -or $truthVersion[$r.Id] -ne $r.SessionCliVersion) { $allVersion = $false }
 }
 Assert $allShape "every row has Agent='codex' and Kind='session'"
 Assert $allCwd 'every Cwd backslash-normalized, no trailing backslash'
 Assert $allMatch 'every row Id/Cwd matches rollout session_meta'
 Assert $allTime 'every Updated parsed as DateTime'
+Assert $allVersion 'every row preserves session_meta cli_version'
 
 # Cap: at most 3 rows per cwd
 $perCwd = @{}
