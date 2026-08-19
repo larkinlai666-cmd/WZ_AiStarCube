@@ -14,8 +14,8 @@
 - Capsule: CONTEXT.md
 - Coverage: CONTEXT.md
 - Blockers: none
-- Next: User: restart WezTerm (Init five agents + 1-frame cat); approve checklist (P-006 → D); optional gates (verify-gate / pre-commit / handoff protocol) pending approval. Pushed d606ae7, clean fast-forward.
-- Updated: 2026-08-19T16:25:00Z
+- Next: User: restart WezTerm, F8 must open repair\ as WZ_Repair | chosen agent.
+- Updated: 2026-08-19T17:30:00Z
 - Device: SK-20240507HWFH
 
 ## Objective

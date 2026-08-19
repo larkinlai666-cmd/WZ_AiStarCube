@@ -24,9 +24,10 @@
 | `F5` | 重载配置 |
 | `F6` | 三栏 Agent 工作台 |
 | `F7` | 文件侧栏 |
+| `F8` | 逃生舱（`repair\`，等权选 Agent） |
 | `Ctrl+Shift+R` | 备用重载 |
 
-不设置 Leader，不占用 F8/F9，也没有任何 Agent 的专属主入口。
+不设置 Leader。F8 是产品修理入口，不是日常任务。`workbench\wz.cmd doctor|report|repair` 与 F8 同一套。
 
 ## 进度语义
 

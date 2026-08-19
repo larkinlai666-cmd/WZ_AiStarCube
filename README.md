@@ -77,9 +77,10 @@ powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1 -DoctorOnly
 | `F5` | 重载 WezTerm 配置 |
 | `F6` | 打开三栏 Agent 工作台 |
 | `F7` | 打开项目文件侧栏 |
+| `F8` | 逃生舱（安装根 `repair\`，等权选 Agent；Init 坏了按这个） |
 | `Ctrl+Shift+R` | 备用配置重载 |
 
-工作台不绑定 Leader，也不占用 F8/F9。Init 面板可选择任务、创建项目、刷新 Agent 清单或退出。
+工作台不绑定 Leader。Init 面板可选择任务、创建项目、刷新 Agent 清单或退出。Init 不可用时按 F8，或运行 `~\.config\wezterm\workbench\wz.cmd repair`。
 
 在任意项目目录中打开：
 

@@ -20,6 +20,10 @@ local-assets/
 live-workbench/workbench/recent-parents.tsv
 live-workbench/workbench/agent-registry.local.tsv
 live-workbench/workbench/tabtitle-debug.log
+live-workbench/workbench/last-load-errors.txt
+live-workbench/repair/JOURNAL.md
+live-workbench/repair/INSTALL.txt
+live-workbench/repair/INCIDENT-*.md
 
 # Large binary assets stay external unless the project explicitly adopts Git LFS
 *.mp4

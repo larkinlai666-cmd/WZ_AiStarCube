@@ -4,10 +4,12 @@
 
 ## 施工红线（任何 Agent 必读，交付前逐项自查）
 
+**R0 · Agent 平权（最高门禁，先于其它所有条）。** 任何功能、默认启动、逃生口、安装器、文档主路径，不得把某一家 Agent 写成唯一入口或隐式默认。专属 resume/`--cwd` 只能当可选适配器。交付必须跑 `prototypes/hardening-smoke/test-agent-parity.ps1`（`validate_project.ps1` 已强制）。三种都必须成立：本机零该 Agent、仅另一家、多家等权。违反本条的交付视为未完成。
+
 以下每条都由真实事故换来，违反任意一条的交付视为未完成：
 
 1. **编辑 `bootstrap.ps1` / `sidebar.ps1` / `agent-discovery.ps1` 后，第一件事必须运行** `prototypes/hardening-smoke/bom-and-parse.ps1`（编辑器会剥 BOM，PS 5.1 按 GBK 误读中文注释即 parse 爆炸）。
-2. **交付前必跑三件套**：`bom-and-parse` → 管道冒烟（`printf 'q\n'` 进 live bootstrap，exit 0）→ `test-init-e2e.ps1`（端到端行为断言）。改了启动链另加 `wezterm ls-fonts`；改了 lua 另加 `lua_balance_check.py` 与 `scripts/wezterm_load_guard.ps1`。
+2. **交付前必跑三件套**：`test-agent-parity.ps1` → `bom-and-parse` → `test-init-e2e.ps1`。改了启动链另加 `wezterm ls-fonts`；改了 lua 另加 `lua_balance_check.py` 与 `scripts/wezterm_load_guard.ps1`。
 3. **改了调用约定，必须连带真实调用方一起测**。只测被改文件、绕开调用方的测试不算回归（2026-08-19 splat 事故：单测全绿、真实 Init 全灭）。
 4. **跨脚本调用只许内联命名参数，禁止数组 splat**（PS 5.1 对数组 splat 做位置绑定，参数错位且静默）。
 5. **禁止无日志的空 catch**。关键路径 catch 至少落一行 debug 日志（参见 bootstrap 的 `discovery-debug.log` 模式）；优雅降级让故障隐身，比崩溃更难查。

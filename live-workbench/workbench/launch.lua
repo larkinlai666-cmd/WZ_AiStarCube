@@ -21,6 +21,7 @@ local function file_exists(p)
 end
 
 M.bootstrap_ps1 = home .. "\\.config\\wezterm\\workbench\\bootstrap.ps1"
+M.escape_wrap_ps1 = home .. "\\.config\\wezterm\\workbench\\escape-wrap.ps1"
 M.agent_discovery_ps1 = home .. "\\.config\\wezterm\\workbench\\agent-discovery.ps1"
 M.no_bootstrap_flag = home .. "\\.config\\wezterm\\workbench\\no-bootstrap"
 
@@ -89,8 +90,30 @@ function M.installed_agents(refresh)
   return out
 end
 
---- Task init panel (startup + new tab default / + button)
+--- Cold start / new tab: NEVER point at bootstrap.ps1 directly.
+--- escape-wrap.ps1 runs Init and falls back to a plain shell if Init dies.
 function M.bootstrap_args()
+  local wrap = M.escape_wrap_ps1
+  local f = io.open(wrap, "r")
+  if f then
+    f:close()
+    return {
+      "powershell.exe",
+      "-NoLogo",
+      "-NoProfile",
+      "-NoExit",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      wrap,
+    }
+  end
+  -- Last-ditch: wrap file missing (partial install) — bare shell, not Init.
+  return M.powershell
+end
+
+--- Raw Init (F3 wizard only). Must not be used as default_prog.
+function M.bootstrap_raw_args()
   return {
     "powershell.exe",
     "-NoLogo",
@@ -354,6 +377,11 @@ function M.apply(config)
   -- must be a bound project (D-003). Real work starts from the Init panel;
   -- the only escapes below are plain shells; no product gets a private menu.
   config.launch_menu = {
+    {
+      label = "★ WZ 逃生壳（纯 PowerShell，不跑 Init）",
+      args = M.powershell,
+      cwd = home,
+    },
     {
       label = "★ WZ 任务初始化面板（选/建项目后再开 AI）",
       args = M.bootstrap_args(),

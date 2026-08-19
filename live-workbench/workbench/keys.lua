@@ -9,7 +9,8 @@
 --   F7  Explorer sidebar
 --   F1  optional cheatsheet (may be swallowed by Windows Help)
 --
--- Not bound: F8/F9 continue/picker, Leader, Ctrl+Shift+T teaching.
+-- F8 is bound in wezterm.lua AFTER this table is applied (escape pod).
+-- Not bound here: F9, Leader.
 -- Init list = click + (default_prog) or cold start.
 --
 local wezterm = require("wezterm")
@@ -37,7 +38,7 @@ function M.apply(config)
     pcall(function()
       window:toast_notification(
         "AI STAR CUBE",
-        "配置已重载 · F3新建 · F5重载 · F6桌 · F7文件 · F4关窗格",
+        "配置已重载 · F8逃生舱 · F3新建 · F6桌 · F7文件",
         nil,
         5000
       )

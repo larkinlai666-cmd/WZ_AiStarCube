@@ -4,7 +4,8 @@
 --
 --  Chinese-IME friendly: no Shift/uppercase for core workbench keys
 --  Direct: F1 help · F3 new project · F4 close pane · F5 reload · F6 desk · F7 explorer
---  No Leader layer; F2 and F8–F12 remain available to Agent CLIs.
+--  No Leader layer; F2 and F9–F12 remain available to Agent CLIs.
+--  F8 = absolute escape pod (does not run Init).
 --  Reload: Ctrl+Shift+R  (does not need Leader)
 --  Scope: window-local only (WezTerm focused); never system-global
 --
@@ -86,6 +87,48 @@ safe_apply("keys", safe_require("workbench.keys"))
 safe_apply("status", safe_require("workbench.status"))
 safe_apply("hyperlinks", safe_require("workbench.hyperlinks"))
 
+-- F8 escape pod: registered AFTER keys.lua (which replaces config.keys).
+-- Must not require bootstrap.ps1, discovery, keys.lua, or layouts.lua.
+do
+  local act = wezterm.action
+  local cfg = config_dir or ((wezterm.home_dir or "") .. "\\.config\\wezterm")
+  local pod = cfg .. "\\workbench\\escape-pod.ps1"
+  local args
+  local f = io.open(pod, "r")
+  if f then
+    f:close()
+    args = {
+      "powershell.exe",
+      "-NoLogo",
+      "-NoProfile",
+      "-NoExit",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      pod,
+    }
+  else
+    args = {
+      "powershell.exe",
+      "-NoLogo",
+      "-NoProfile",
+      "-NoExit",
+      "-Command",
+      "Write-Host 'escape-pod.ps1 missing. Run workbench\\Escape-WZ.cmd or reinstall.' -ForegroundColor Yellow",
+    }
+  end
+  config.keys = config.keys or {}
+  table.insert(config.keys, {
+    key = "F8",
+    mods = "NONE",
+    action = act.SpawnCommandInNewTab({
+      args = args,
+      -- workbench dir always exists; pod creates repair\ itself
+      cwd = cfg .. "\\workbench",
+    }),
+  })
+end
+
 if #load_errors > 0 then
   -- Surface once after GUI is up (toast needs a window; use window-config-reloaded)
   wezterm.GLOBAL = wezterm.GLOBAL or {}
@@ -93,11 +136,19 @@ if #load_errors > 0 then
   wezterm.on("gui-attached", function()
     pcall(function()
       local msg = table.concat(load_errors, " | ")
-      if #msg > 180 then
-        msg = msg:sub(1, 177) .. "..."
+      if #msg > 140 then
+        msg = msg:sub(1, 137) .. "..."
       end
+      pcall(function()
+        local f = io.open((config_dir or ((wezterm.home_dir or "") .. "\\.config\\wezterm")) .. "\\workbench\\last-load-errors.txt", "w")
+        if f then
+          f:write(os.date("!%Y-%m-%dT%H:%M:%SZ") .. "\n")
+          f:write(table.concat(load_errors, "\n"))
+          f:close()
+        end
+      end)
       for _, gui in ipairs(wezterm.gui.gui_windows() or {}) do
-        gui:toast_notification("AI STAR CUBE 模块加载告警", msg, nil, 8000)
+        gui:toast_notification("WZ 模块告警 · 按 F8 进逃生舱", msg .. "  · F8 = repair", nil, 9000)
       end
     end)
   end)

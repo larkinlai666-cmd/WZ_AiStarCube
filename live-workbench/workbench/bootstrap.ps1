@@ -1649,7 +1649,7 @@ function Show-Screen {
   $agTitle = if ($armRow) { '2 AGENT  << step 2 · pick agent for ' + $armRow.Project } else { '2 AGENT' }
   Write-BoxTop -Title $agTitle -Border $bAgt
   if ($peerList.Count -eq 0) {
-    Write-BoxLine -Text '(no self-described or locally registered agent CLI detected)' -Fg DarkGray -Border $bAgt
+    Write-BoxLine -Text '(no Agent detected)  install a CLI or press F8 for the repair pod' -Fg DarkGray -Border $bAgt
   } else {
     $aChipC = if ($agentActive) { [ConsoleColor]::Yellow } else { [ConsoleColor]::DarkGray }
     $aNameC = if ($agentActive) { [ConsoleColor]::White } else { [ConsoleColor]::Gray }
@@ -3043,7 +3043,7 @@ while ($running) {
     if ($peerIds.Count -eq 0) {
       $script:PendingRow = $null
       $script:PendingForceNew = $false
-      $script:StatusHint = 'no installed agent detected — install one or add agent-registry.local.tsv'
+      $script:StatusHint = 'no installed agent — add a CLI or press F8 for the repair pod'
       $script:ScreenDirty = $true
       continue
     }

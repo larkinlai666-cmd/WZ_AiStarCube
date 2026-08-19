@@ -764,6 +764,17 @@ if (Test-Path -LiteralPath $sourceIndexPath -PathType Leaf) {
     }
 }
 
+$parityScript = Join-Path $rootFull 'prototypes\hardening-smoke\test-agent-parity.ps1'
+if (-not (Test-Path -LiteralPath $parityScript -PathType Leaf)) {
+    Add-ValidationError 'Missing highest gate: prototypes/hardening-smoke/test-agent-parity.ps1'
+} else {
+    $psExe = Join-Path $PSHOME 'powershell.exe'
+    $parityOut = & $psExe -NoProfile -ExecutionPolicy Bypass -File $parityScript 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Add-ValidationError ('Agent parity gate failed (R0). Output: ' + (($parityOut | Out-String).Trim()))
+    }
+}
+
 if ($warnings.Count -gt 0 -and -not $Quiet) {
     foreach ($message in $warnings) { Write-Host "WARNING: $message" }
 }

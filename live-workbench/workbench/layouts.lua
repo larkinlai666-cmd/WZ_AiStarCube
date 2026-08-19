@@ -19,7 +19,7 @@ end
 --- no "'kimi' 不是命令" dead pane (D-005: one missing agent never blocks peers).
 local function gate_spawn(window, cwd_path, agent, title)
   if not desk.is_strong_path(cwd_path) then
-    toast(window, title, "无可靠项目路径 — 先在 Init 面板选定任务（或按 c 创建）", 4500)
+    toast(window, title, "无可靠项目路径 — Init 里选任务，或按 F8 进逃生舱", 4500)
     return false
   end
   agent = agent or ""
@@ -29,7 +29,7 @@ local function gate_spawn(window, cwd_path, agent, title)
       title,
       "未找到 "
         .. agent
-        .. " CLI — 请在 desk-roots 第三列改绑当前已探测到的 agent，或重新安装它",
+        .. " CLI — 改绑或重装；工作台坏了按 F8 进逃生舱",
       5000
     )
     return false

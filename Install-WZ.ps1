@@ -271,6 +271,31 @@ function Install-Workbench {
   } else {
     Write-Ok 'Kept agent-registry.local.tsv (personal Agent registrations preserved)'
   }
+
+  $repair = Join-Path $Dst 'repair'
+  if (-not (Test-Path -LiteralPath $repair -PathType Container)) {
+    New-Item -ItemType Directory -Force -Path $repair | Out-Null
+  }
+  Write-WzUtf8LinesAtomic -Path (Join-Path $repair 'INSTALL.txt') -Lines @(
+    ('INSTALL=' + $Dst),
+    'This folder is the WZ repair desk. Do not use it for daily project work.'
+  )
+  $incident = Join-Path $repair 'INCIDENT.md'
+  if (-not (Test-Path -LiteralPath $incident -PathType Leaf)) {
+    $srcIncident = Join-Path $Src 'repair\INCIDENT.md'
+    if (Test-Path -LiteralPath $srcIncident -PathType Leaf) {
+      Copy-WzFileAtomic -Source $srcIncident -Destination $incident
+    } else {
+      Write-WzUtf8LinesAtomic -Path $incident -Lines @(
+        '# WZ repair notes',
+        '',
+        'Do not treat this folder as a daily project.'
+      )
+    }
+    Write-Ok 'Created repair/INCIDENT.md'
+  } else {
+    Write-Ok 'Kept existing repair notes (not overwritten)'
+  }
 }
 
 function Bind-ThisRepo {
@@ -383,8 +408,8 @@ Write-Host @"
   1. Restart WezTerm (or press Ctrl+Shift+R to reload config).
   2. You should land on the Init panel (task table).
   3. Enter = pick task row → pick agent in 2 AGENT zone ·  c = create NEW project (path freezes).
-  4. F1 cheatsheet · F3 new-project wizard · F6 AI desk · F7 Explorer · F4 close pane.
-  5. F5 (or Ctrl+Shift+R) reloads config; no Leader layer (IME-safe, F2 left to agents).
+  4. F1 cheatsheet · F3 new-project wizard · F6 AI desk · F7 Explorer · F8 repair pod · F4 close pane.
+  5. F5 (or Ctrl+Shift+R) reloads config. If Init is dead: F8, or workbench\wz.cmd repair.
   6. Optional: open this repo with correct cwd:
        powershell -ExecutionPolicy Bypass -File .\open-project.ps1
 
@@ -393,8 +418,9 @@ Write-Host @"
 
 if ($fail -gt 0) {
   Write-Host ""
-  Write-Host "Install finished with $fail doctor warning(s). Fix prerequisites, then re-run:" -ForegroundColor DarkCyan
+  Write-Host "Install finished with $fail doctor warning(s). Press F8 in WezTerm for the repair pod, or:" -ForegroundColor DarkCyan
   Write-Host "  powershell -ExecutionPolicy Bypass -File .\Install-WZ.ps1 -DoctorOnly" -ForegroundColor Cyan
+  Write-Host "  powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\.config\wezterm\workbench\wz.ps1 -Command doctor" -ForegroundColor Cyan
   exit 1
 }
 

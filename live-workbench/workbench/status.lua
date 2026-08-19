@@ -23,7 +23,7 @@ local function route_label(id)
 end
 
 -- Bump on every status logic change so stacked old handlers no-op
-local STATUS_GEN = 29
+local STATUS_GEN = 30
 
 -- Catppuccin Mocha accents (same family as config.color_scheme):
 --   brand  = Yellow  #f9e2af  (identity, fixed)
@@ -547,14 +547,8 @@ function M.apply(config)
       tool = "App"
     end
 
-    -- No process identity detected: any dynamic desk-roots route is displayable.
-    if tool == "Shell" or tool == "App" then
-      local agent_root = desk.get_tab_desk_by_id(tab.tab_id)
-      local agent = agent_root and desk.agent_for_path(agent_root) or nil
-      if agent and agent ~= "" and agent ~= "shell" then
-        tool = route_label(agent)
-      end
-    end
+    -- Desk-roots 3rd column is the default ROUTE for a new task, not the
+    -- live role of this tab. An idle or hosted PowerShell must stay Shell.
 
     -- Pure navigation label (our only customization). Length does not depend on activity.
     local label

@@ -32,7 +32,7 @@
 
 ## Working Assumptions
 
-- H-002: PPS at `G:\GrokProject\PPS_SKILL`; project `scripts/` lifecycle. H-003: Live `~\.config\wezterm`; keep `live-workbench/` in sync.
+- H-002: PPS at `G:\GrokProject\PPS_SKILL`; project `scripts/` lifecycle. H-003: Live `~\.config\wezterm`; keep `live-workbench/` in sync. H-004: F8 = equal-agent escape pod until promoted to D. R0 parity gate is mandatory.
 ## Current Risks
 
 - Home-cwd history not formal TASK.
@@ -76,4 +76,4 @@
 | D-017 | Windows-only 四原则蒸馏 + 真实读取进度/不定启动动画 + 对抗回归 + `_win` 发布边界 | Present |
 
 ## Next Action
-全部未提交内容已推送（d606ae7，纯快进零冲突）；演进报告 docs/workbench-evolution-report.md。User: 重启 WezTerm 终验五家等权 + 1 帧猫；批准验收清单（P-006 → D）；可选项 verify-gate/pre-commit/接力协议待批。
+User: 重启 WezTerm 按 F8，确认 JOURNAL 有新记录、页签 WZ_Repair|所选 Agent；报错 toast 应提到 F8。

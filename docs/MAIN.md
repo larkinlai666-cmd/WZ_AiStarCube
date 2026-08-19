@@ -186,7 +186,7 @@ D-004 已定案；切片落地期间 Grok 默认行为不变（agent 列缺省 =
 | F6 | 三栏 AI 桌：先弹**全量已装 agent 平权选择器**（默认 = desk-roots 第三列路由排第一，↑↓+Enter 确认，Esc 取消零 spawn；单一已装 agent 自动跳过；未绑定页签只弹 toast） |
 | F7 | Left Explorer（绑当前页签 DESK） |
 
-**无 Leader 层（D-007，2026-08-13 用户决定退役）**；F8–F12 刻意不绑；F2、`Ctrl+;` 归 agent CLI；键仅 WezTerm 聚焦生效。面板本地键（c/n/s/r/a/q/数字）承担一切非全局动作；无任何产品专属键。
+**无 Leader 层（D-007）**；**F8 = 逃生舱**（cwd = 安装根 `repair\`，页签 `WZ_Repair | 所选 Agent`；`wz doctor/report/repair` 同实现）；F9–F12 不绑；F2、`Ctrl+;` 归 agent CLI；键仅 WezTerm 聚焦生效。面板本地键（c/n/s/r/a/q/数字）承担日常动作。
 
 ### Session cwd (F-005) + create freeze (F-008)
 
@@ -201,7 +201,7 @@ Agent 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。`open-projec
 | F-006 侧栏与对话同根 | **已改 live config** | 焦点在 Grok 时 F7 以 `--cwd` 为 DESK；页签级 desk；`open-project.ps1` 写 desk-roots |
 | F-006 侧栏可点击打开 | **已改** | 文件 OSC-8；文件夹数字进入；0 上级 |
 | 顶栏本页签动态任务 | **已改** | 状态跟 **当前标签** 窗格 cwd；HUD 随页签切换自动刷新 |
-| 任务初始化面板 | **冷启动+新标签统一** | `default_prog`/Ctrl+Shift+T → `bootstrap.ps1` 表格；纯 Shell=Init 面板按 `s`（或 launch menu 的 PowerShell 项）；分屏仍 PS；`no-bootstrap` 可关 |
+| 任务初始化面板 | **冷启动+新标签统一** | `default_prog` → `escape-wrap.ps1`。炸了按 **F8** 进安装根 `repair\`（`WZ_Repair \| Agent`）。`wz doctor/report/repair` 与 F8 同一实现。 |
 | Init 面板卡顿 | **已改 live** | 原为每次按键全量重扫 grok/kimi/codex 会话目录；现行缓存 + 脏标记（`$script:RowsDirty`），仅 `r`/ `a`/ 动作后重建，j/k/数字/Enter 纯渲染缓存行 |
 | Init 列表 Act\*/排序 | **已下线/已改** | Act\* 列与整条 marks 管线（缓存+后台刷新器+空闲轮询）已**整体拆除**（用户 2026-08-13：优化不出效果，干掉）；列表改为 `# DateTime Tag Project Path Model Title`，Path 列头部保留、超长尾端 `~` 截断；bound 层按最近活跃倒序 |
 | Init 启动与 agent 解耦 | **已改 live（同屏两区两步 + 开放探测）** | 本机通过包/清单/版本资源/用户级独立 CLI 静态能力证据/本地兜底注册探测到的全部 Agent 常驻「2 AGENT」区，不设产品白名单；冷启动必重扫，`r` 在任务步和 Agent 选择步都可重读持久化 PATH。`wz>` 选任务 → `agent>` 选 Agent，取消零 spawn；R1–R6 不变。COMMAND 采用三列固定单元格，`c/s/q` 等后续入口纵向对齐；Grok 专属 Dashboard 已从面板和启动菜单清除。屏幕仅在状态转换时重绘；亮黄仍只代表可输入项（D-013）。 |
@@ -214,7 +214,7 @@ Agent 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。`open-projec
 - 个人「彻底想要的样子」其余缺口待继续收集。
 - 多模型接手同一任务 ~~无设计（F-010）~~ → 已有设计（D-004）并完成平权落地（D-005，2026-08-10）；残留：codex 无标题会话默认被 Layer C 过滤（`-All` 可见）、kimi `-p` 为一次性非交互。
 - 配置在 home 树；第三方用 `Install-WZ.ps1`，作者本机仍以 live 为准。
-- **`bootstrap.ps1` 依赖 UTF-8 BOM**：PS 5.1 对无 BOM 文件按 GBK 误读，中文/颜文字会炸解析；编辑工具写回会剥 BOM —— 改后必须补回 BOM 再跑 ParseFile 校验。
+- **`bootstrap.ps1` 依赖 UTF-8 BOM**：PS 5.1 对无 BOM 文件按 GBK 误读，中文/颜文字会炸解析；编辑工具写回会剥 BOM —— 改后必须补回 BOM 再跑 ParseFile 校验。Init 因此炸掉时用 `docs/escape-hatch.md` 三层逃生，不要再开一个 Init 页签。
 
 ## Current package target (workbench-first)
 

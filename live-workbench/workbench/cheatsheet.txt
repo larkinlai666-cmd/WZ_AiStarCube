@@ -12,6 +12,12 @@
   F5   重载 WezTerm 配置
   F6   三栏 AI 桌（先选 agent：已装 agent 平权列表，默认=任务路由排第一，↑↓+Enter / Esc 取消）
   F7   左侧 Explorer（先点 AI 对话窗格再 F7，同 DESK）
+  F8   逃生舱（安装根\repair\，等权选 Agent，页签 WZ_Repair | 那一家）
+
+【绝对逃生】
+  F8                 一键进 repair\。JOURNAL.md 记历史事故。不是日常项目。
+  wz doctor|report|repair   与 F8 同一套（workbench\wz.cmd）
+  Escape-WZ.cmd      配置全挂时从资源管理器双击
 
 【不用快捷键的入口】
   标签栏「+」 / 冷启动   → Init 静态面板（wz> 输任务号+Enter → agent> 输模型号/Enter=默认/q 取消；熟手秒杀：两位数<任务><agent>一次直启，如 13=任务1+第3个agent，n13=强制新会话；c=新建向导；屏幕只在状态变化时重绘；启动成功后 Init 页签自动关闭，取消/失败不关闭）
@@ -33,6 +39,6 @@
   文件/会话读取的猫猫进度与统一真实计数同步；未知时长的 Agent 启动只显示循环等待动画
 
 【刻意不做】
-  Leader 组合键、F8 续聊键、F9 选项目键
+  Leader 组合键、F9 选项目键（F8 现为逃生舱，WezTerm 会吃掉该键）
   续已有对话 → 点「+」进 Init → wz> 输任务号 → agent> 直接回车（默认=该会话的 agent，即续）
 ═══════════════════════════════════════════════════════════

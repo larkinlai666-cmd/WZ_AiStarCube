@@ -50,7 +50,7 @@ function Get-AgentZoneRows($Lines) {
     if (-not $inZone) { continue }
     if ($ln -match '^\s*\+-+\+\s*$') { continue }
     if ($ln -match '\|\s*\[\d+\]\s') { $rows++; continue }
-    if ($ln -match 'no self-described or locally registered') { $sawEmpty = $true; continue }
+    if ($ln -match 'no self-described or locally registered|no Agent detected') { $sawEmpty = $true; continue }
     # zone content ended: a non-row, non-border line after rows appeared
     if ($rows -gt 0 -or $sawEmpty) { $bestRows = $rows; $bestEmpty = $sawEmpty; $inZone = $false }
   }
