@@ -36,7 +36,7 @@
   静默单文件 CLI 可填 workbench/agent-registry.local.tsv，格式：id<TAB>label<TAB>命令或绝对路径（可用 | 分隔别名）
   两步同屏：wz> 输任务号，再 agent> 输 Agent 号（默认=该会话/任务路由）
   COMMAND 三列固定对齐，仅 a/r/q 二级操作；无产品专属 Dashboard
-  文件/会话读取的猫猫进度与统一真实计数同步；未知时长的 Agent 启动只显示循环等待动画
+  文件/会话读取的猫猫进度与统一真实计数同步；原生 Agent 直 spawn，启动黑屏是 Agent 冷启动
 
 【刻意不做】
   Leader 组合键、F9 选项目键（F8 现为逃生舱，WezTerm 会吃掉该键）

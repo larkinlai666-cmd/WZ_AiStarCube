@@ -97,7 +97,7 @@ Binding table on machine: `workbench\desk-roots.tsv`. Marker: `<project>\.wz-pro
 
 #### 2 · Agent 开放探测与可选续聊适配器（D-016）
 
-候选列表**不写死产品类型**。每次 Init 冷启动（或两步中的任一步按 `r`）由 `agent-discovery.ps1` 重新枚举，并合并宿主进程 PATH 与最新用户/系统持久化 PATH，因此安装器更新 PATH 后无需重启整个 WezTerm。自动证据包括 npm/Python 包元数据、可执行文件版本元数据、`*.wz-agent.json`；对于没有包清单/版本资源、安装在用户级专属 `app\bin` 的独立 EXE，小文件做受限前缀扫描（字节+时间封顶，指纹缓存）；超过上限的专属主命令以「用户目录 + 与应用文件夹名匹配」为受限证据，禁止把 100MB+ 自包含 CLI 整文件读进 Init。相同负载别名折叠到与应用目录最匹配的主命令。探测过程从不执行候选程序，判断词只描述 AI/coding-agent 能力，不含产品名。完整探测结果缓存 20 秒（Init 按 `r` 强制重扫）。会话启动先画 1 帧不定进度猫再立刻 exec（零 Sleep），猫留在屏上直到 TUI 接管；禁止把动画睡在真实启动前面。仍完全静默的独立二进制可在本地 TSV 写 `id<TAB>label<TAB>command-or-absolute-path`（第三列支持 `|` 分隔别名），同样无需改源码。仓库自带 `agent-registry.tsv` 只有协议说明，不带产品白名单。
+候选列表**不写死产品类型**。每次 Init 冷启动（或两步中的任一步按 `r`）由 `agent-discovery.ps1` 重新枚举，并合并宿主进程 PATH 与最新用户/系统持久化 PATH，因此安装器更新 PATH 后无需重启整个 WezTerm。自动证据包括 npm/Python 包元数据、可执行文件版本元数据、`*.wz-agent.json`；对于没有包清单/版本资源、安装在用户级专属 `app\bin` 的独立 EXE，小文件做受限前缀扫描（字节+时间封顶，指纹缓存）；超过上限的专属主命令以「用户目录 + 与应用文件夹名匹配」为受限证据，禁止把 100MB+ 自包含 CLI 整文件读进 Init。相同负载别名折叠到与应用目录最匹配的主命令。探测过程从不执行候选程序，判断词只描述 AI/coding-agent 能力，不含产品名。完整探测结果缓存 20 秒（Init 按 `r` 强制重扫）。原生 `.exe/.com` 直 spawn，不再画启动猫：TUI 会立刻清屏，包装只剩 PowerShell 税。`.cmd/.bat/.ps1` 仍走 PowerShell `-NoExit` 宿主，同样不画封面。Init 读列表的行走猫保留，且必须跟真实计数走。仍完全静默的独立二进制可在本地 TSV 写 `id<TAB>label<TAB>command-or-absolute-path`（第三列支持 `|` 分隔别名），同样无需改源码。仓库自带 `agent-registry.tsv` 只有协议说明，不带产品白名单。
 
 下表只记录已有的**续聊参数适配器**，不是发现清单；没有专属适配器的新 Agent 仍可等权展示并以项目 cwd 正常新开：
 
@@ -205,7 +205,7 @@ Agent 顶栏 cwd = 进程启动 cwd；会话内 `cd` 不改顶栏。`open-projec
 | Init 面板卡顿 | **已改 live** | 原为每次按键全量重扫 grok/kimi/codex 会话目录；现行缓存 + 脏标记（`$script:RowsDirty`），仅 `r`/ `a`/ 动作后重建，j/k/数字/Enter 纯渲染缓存行 |
 | Init 列表 Act\*/排序 | **已下线/已改** | Act\* 列与整条 marks 管线（缓存+后台刷新器+空闲轮询）已**整体拆除**（用户 2026-08-13：优化不出效果，干掉）；列表改为 `# DateTime Tag Project Path Model Title`，Path 列头部保留、超长尾端 `~` 截断；bound 层按最近活跃倒序 |
 | Init 启动与 agent 解耦 | **已改 live（同屏两区两步 + 开放探测）** | 本机通过包/清单/版本资源/用户级独立 CLI 静态能力证据/本地兜底注册探测到的全部 Agent 常驻「2 AGENT」区，不设产品白名单；冷启动必重扫，`r` 在任务步和 Agent 选择步都可重读持久化 PATH。`wz>` 选任务 → `agent>` 选 Agent，取消零 spawn；R1–R6 不变。COMMAND 采用三列固定单元格，`c/s/q` 等后续入口纵向对齐；Grok 专属 Dashboard 已从面板和启动菜单清除。屏幕仅在状态转换时重绘；亮黄仍只代表可输入项（D-013）。 |
-| 读取/启动进度语义 | **D-017 已加固** | 文件与会话读取先枚举一次并共享一个全局计数轴，完成合并和发布后才到 100%；外部 Agent 就绪时长不可知，启动阶段改用不定进度动画，不显示虚假百分比。 |
+| 读取/启动进度语义 | **D-017 + D-018** | 文件与会话读取先枚举一次并共享一个全局计数轴，完成合并和发布后才到 100%；外部 Agent 就绪时长不可知，原生 `.exe` 直 spawn，启动黑屏属于 Agent 自己，工作台不再画封面猫。 |
 
 ### Known residual pain (workbench backlog seeds)
 

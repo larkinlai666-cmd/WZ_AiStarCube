@@ -176,52 +176,28 @@ local function ps_literal(value)
   return "'" .. tostring(value or ""):gsub("'", "''") .. "'"
 end
 
---- One immediate cat frame, then exec. No Sleep: the frame stays on screen
---- while the CLI boots and is replaced when a TUI takes the console.
-local function splash_prefix(label, project)
-  label = tostring(label or "agent"):gsub("'", "''")
-  project = tostring(project or ""):gsub("'", "''")
-  return table.concat({
-    "try { [Console]::Clear() } catch {}",
-    "Write-Host ''",
-    "Write-Host '   /\\_/\\' -ForegroundColor Magenta",
-    "Write-Host '  ( o.o )' -ForegroundColor Magenta",
-    "Write-Host '   > ^ <' -ForegroundColor Magenta",
-    "Write-Host '  handing off to agent process...' -ForegroundColor DarkGray",
-    "Write-Host ('  " .. project .. " · " .. label .. "') -ForegroundColor Gray",
-  }, "; ")
-end
-
-function M.handoff_args(exe, args, opts)
-  opts = opts or {}
+--- Shim host only. Native .exe is spawned directly — a cover frame cannot
+--- survive a TUI taking the console, and costs a PowerShell tax for no cover.
+function M.shim_args(exe, args)
   local run = "& " .. ps_literal(exe)
   for _, arg in ipairs(args or {}) do
     run = run .. " " .. ps_literal(arg)
   end
-  local body = splash_prefix(opts.label, opts.project)
-  if opts.clear_before then
-    body = body .. "; try { [Console]::Clear() } catch {}"
-  end
-  body = body .. "; " .. run
-  local argv = {
+  return {
     "powershell.exe",
     "-NoLogo",
     "-NoProfile",
+    "-NoExit",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    run,
   }
-  if opts.keep_open then
-    table.insert(argv, "-NoExit")
-  end
-  table.insert(argv, "-ExecutionPolicy")
-  table.insert(argv, "Bypass")
-  table.insert(argv, "-Command")
-  table.insert(argv, body)
-  return argv
 end
 
 --- Build a launch argv from the exact path returned by open discovery.
---- Every Agent gets a zero-sleep cover frame. Native .exe still uses a
---- PowerShell host so the 2-5s TUI boot is not a black pane. Shims keep
---- -NoExit because CreateProcess cannot use .cmd/.bat/.ps1 as argv0.
+--- Native .exe/.com: argv0 is the binary. Shims keep -NoExit because
+--- CreateProcess cannot use .cmd/.bat/.ps1 as argv0.
 function M.command_args(agent, args)
   local exe = M.resolve_agent_exe(agent)
   if not exe or not file_exists(exe) then
@@ -230,11 +206,14 @@ function M.command_args(agent, args)
   args = args or {}
   local lower = tostring(exe):lower()
   local native = lower:match("%.exe$") or lower:match("%.com$")
-  return M.handoff_args(exe, args, {
-    label = M.agent_label(agent),
-    keep_open = not native,
-    clear_before = (tostring(agent or ""):lower() == "deepseek"),
-  })
+  if native then
+    local argv = { exe }
+    for _, arg in ipairs(args) do
+      table.insert(argv, arg)
+    end
+    return argv
+  end
+  return M.shim_args(exe, args)
 end
 
 --- Args that start the optional Grok adapter when present

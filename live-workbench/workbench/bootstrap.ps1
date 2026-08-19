@@ -1799,55 +1799,35 @@ function Invoke-WezCliSpawn {
   return ($LASTEXITCODE -eq 0)
 }
 
-function Get-AgentLaunchArgv {
-  # Cover first, then start the CLI. A native .exe still goes through the
-  # splash host so the 2-5s TUI boot is not a black pane. The splash itself
-  # must not Sleep — that would serialize animation in front of real work.
-  param([string]$Exe, [string[]]$ExeArgs, [string]$AgentLabel, [string]$Project)
-  return @(Get-AgentSplashSpawn -Exe $Exe -ExeArgs $ExeArgs -AgentLabel $AgentLabel -Project $Project)
-}
-
-function Get-AgentSplashScript {
-  # Design: mask the stiff empty pane while the agent process loads.
-  # One immediate indeterminate frame, zero Sleep, no Clear — the cat stays
-  # until a full-screen TUI takes the console. Line-REPL adapters (DeepSeek)
-  # clear immediately before invoke so the frame does not become residue.
-  param([string]$AgentLabel, [string]$Project)
-  $al = $AgentLabel.Replace("'", "''")
-  $pj = $Project.Replace("'", "''")
-  $tpl = @'
-try { [Console]::Clear() } catch {}
-$__al = '__WZ_SPLASH_AGENT_7F3A__'
-$__pj = '__WZ_SPLASH_PROJ_7F3A__'
-$__w = 80
-try { $__w = [Console]::WindowWidth } catch {}
-$__bw = [Math]::Min(44, [Math]::Max(16, $__w - 26))
-$bar = ([string][char]0x2591) * 2 + ([string][char]0x2588) * 6 + ([string][char]0x2591) * [Math]::Max(8, $__bw - 8)
-try {
-  Write-Host ''
-  Write-Host '   /\_/\' -ForegroundColor Magenta
-  Write-Host '  ( o.o )' -ForegroundColor Magenta
-  Write-Host '   > ^ <' -ForegroundColor Magenta
-  Write-Host ('  [' + $bar + ']') -ForegroundColor Magenta
-  Write-Host ('  ' + $__pj + ' · ' + $__al) -ForegroundColor Gray
-  Write-Host '  handing off to agent process...' -ForegroundColor DarkGray
-} catch {}
-'@
-  return $tpl.Replace('__WZ_SPLASH_AGENT_7F3A__', $al).Replace('__WZ_SPLASH_PROJ_7F3A__', $pj)
-}
-
-function Get-AgentSplashSpawn {
-  # Spawn argv for: powershell -NoLogo -NoProfile -Command "<splash>; & '<exe>' <args...>".
-  # No -NoExit → when the agent exits, the pane closes (parity with direct
-  # spawn today). argv0 is real powershell.exe (no .cmd-shim freeze hazard).
-  param([string]$Exe, [string[]]$ExeArgs, [string]$AgentLabel, [string]$Project)
+function Get-AgentShimSpawn {
+  # .cmd/.bat/.ps1 cannot be CreateProcess argv0. Host them in powershell
+  # -NoExit so a crash stays visible. No cover frame: a TUI will clear it.
+  param([string]$Exe, [string[]]$ExeArgs)
   $exeLit = "'" + ([string]$Exe).Replace("'", "''") + "'"
   $argStr = ''
   if ($ExeArgs) {
     $argStr = ' ' + (($ExeArgs | ForEach-Object { "'" + ([string]$_).Replace("'", "''") + "'" }) -join ' ')
   }
-  $psCmd = (Get-AgentSplashScript -AgentLabel $AgentLabel -Project $Project) + "`r`n& $exeLit$argStr"
-  return @('powershell.exe', '-NoLogo', '-NoProfile', '-Command', $psCmd)
+  $psCmd = "& $exeLit$argStr"
+  return @('powershell.exe', '-NoLogo', '-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', $psCmd)
+}
+
+function Get-AgentLaunchArgv {
+  # Native .exe/.com: spawn the binary. A PowerShell cover cannot survive a
+  # TUI taking the console, and costs a host tax for no cover. Shims stay
+  # on Get-AgentShimSpawn. AgentLabel/Project kept so callers stay named.
+  param([string]$Exe, [string[]]$ExeArgs, [string]$AgentLabel, [string]$Project)
+  if (Test-WzNativeAgentExe -Exe $Exe) {
+    $out = New-Object System.Collections.Generic.List[string]
+    [void]$out.Add($Exe)
+    if ($ExeArgs) {
+      foreach ($a in @($ExeArgs)) {
+        if ($null -ne $a) { [void]$out.Add([string]$a) }
+      }
+    }
+    return [string[]]$out.ToArray()
+  }
+  return Get-AgentShimSpawn -Exe $Exe -ExeArgs $ExeArgs
 }
 
 function Start-GrokTab {
@@ -1988,15 +1968,8 @@ function Start-CodexTab {
     $proj = Split-Path -Leaf $Cwd
     $tabTitle = '{0} | Codex' -f $proj
     try {
-      if ($isShim) {
-        $argStr = ($fullArgs | ForEach-Object { "'" + ([string]$_).Replace("'", "''") + "'" }) -join ' '
-        $invoke = [System.IO.Path]::GetFileNameWithoutExtension($exe)
-        $psCmd = (Get-AgentSplashScript -AgentLabel 'Codex' -Project $proj) + "`r`n& $invoke $argStr"
-        [void](Invoke-WezCliSpawn -Cwd $Cwd -Argv @('powershell.exe', '-NoLogo', '-NoProfile', '-NoExit', '-Command', $psCmd) -TabTitle $tabTitle)
-      } else {
-        $argv = Get-AgentLaunchArgv -Exe $exe -ExeArgs $fullArgs -AgentLabel 'Codex' -Project $proj
-        [void](Invoke-WezCliSpawn -Cwd $Cwd -Argv $argv -TabTitle $tabTitle)
-      }
+      $argv = Get-AgentLaunchArgv -Exe $exe -ExeArgs $fullArgs -AgentLabel 'Codex' -Project $proj
+      [void](Invoke-WezCliSpawn -Cwd $Cwd -Argv $argv -TabTitle $tabTitle)
       Write-Host ("  OK: {0}" -f $Title) -ForegroundColor Green
       Write-Host ("  -C {0}" -f $Cwd) -ForegroundColor DarkGray
       return $true
@@ -2018,7 +1991,7 @@ function Start-DeepSeekTab {
   # ~/.deepseek-cli/sessions/<sha256(cwd)[0:16]>.json; REPL also auto-restores,
   # so ForceNew cannot guarantee a blank context — CLI's own product behavior).
   # npm .cmd shim MUST NOT be argv0 of CreateProcess → PowerShell host wrap
-  # (codex shim pattern), walking-cat splash prepended.
+  # (codex shim pattern). No cover frame: a line REPL would keep it as residue.
   param(
     [string]$Cwd,
     [string[]]$DeepseekArgs,
@@ -2042,12 +2015,10 @@ function Start-DeepSeekTab {
   $fullArgs = @(); if ($DeepseekArgs) { $fullArgs += $DeepseekArgs }
   if ($script:Wez -and (Test-WezAlive)) {
     $proj = Split-Path -Leaf $Cwd
-    $argStr = ($fullArgs | ForEach-Object { "'" + ([string]$_).Replace("'", "''") + "'" }) -join ' '
-    $invoke = [System.IO.Path]::GetFileNameWithoutExtension($exe)
-    $psCmd = (Get-AgentSplashScript -AgentLabel 'DeepSeek' -Project $proj) + "`r`ntry { [Console]::Clear() } catch {}`r`n& $invoke $argStr"
     $tabTitle = '{0} | DeepSeek' -f $proj
     try {
-      [void](Invoke-WezCliSpawn -Cwd $Cwd -Argv @('powershell.exe', '-NoLogo', '-NoProfile', '-NoExit', '-Command', $psCmd) -TabTitle $tabTitle)
+      $argv = Get-AgentLaunchArgv -Exe $exe -ExeArgs $fullArgs -AgentLabel 'DeepSeek' -Project $proj
+      [void](Invoke-WezCliSpawn -Cwd $Cwd -Argv $argv -TabTitle $tabTitle)
       Write-Host ("  OK: {0}" -f $Title) -ForegroundColor Green
       Write-Host ("  cwd {0}" -f $Cwd) -ForegroundColor DarkGray
       return $true
@@ -2592,9 +2563,33 @@ function Start-ProjectWithCli {
   # Role for tab bar (status.lua reads title for "Project | Codex")
   $role = if ($Label) { $Label } elseif ($Id) { $Id } else { 'AI' }
   $roleEsc = $role.Replace("'", "''")
-  # Keep shell open if CLI exits/crashes so user sees the error instead of a dead tab
-  # Walking-cat splash first (same wrapper animation as Start-*Tab), then WZ launch lines.
-  $psCommand = (Get-AgentSplashScript -AgentLabel $role -Project $Name) + "`r`n" + @"
+  $tabTitle = '{0} | {1}' -f $Name, $role
+
+  if (Test-WzNativeAgentExe -Exe $invoke) {
+    if ($script:Wez -and (Test-WezAlive)) {
+      try {
+        $argv = Get-AgentLaunchArgv -Exe $invoke -ExeArgs @() -AgentLabel $role -Project $Name
+        [void](Invoke-WezCliSpawn -Cwd $Cwd -Argv $argv -TabTitle $tabTitle)
+        Write-Host ("  OK: started {0}" -f $Label) -ForegroundColor Green
+        Write-Host ("  cwd {0}" -f $Cwd) -ForegroundColor DarkGray
+        Write-Host ("  cmd {0}" -f $invoke) -ForegroundColor DarkGray
+        Write-Host ("  tab {0}" -f $tabTitle) -ForegroundColor DarkGray
+        $script:StatusHint = "$Id @ $Name"
+        return $true
+      } catch {
+        Write-Host ("  FAIL spawn: {0}" -f $_.Exception.Message) -ForegroundColor Red
+        return $false
+      }
+    } else {
+      Write-Host '  Start manually in this folder:' -ForegroundColor Cyan
+      Write-Host ("    cd /d {0}" -f $Cwd) -ForegroundColor White
+      Write-Host ("    {0}" -f $invoke) -ForegroundColor White
+      return $false
+    }
+  }
+
+  # Keep shell open if CLI exits/crashes so user sees the error instead of a dead tab.
+  $psCommand = @"
 `$ErrorActionPreference = 'Continue'
 try { `$Host.UI.RawUI.WindowTitle = '$nameEsc | $roleEsc' } catch {}
 Set-Location -LiteralPath '$cwdEsc'
@@ -2626,7 +2621,6 @@ Write-Host '  CLI ended. Window kept open - close tab when done.' -ForegroundCol
         '-Command', $psCommand
       ) 2>$null | Out-String
       # Prefer explicit tab title so bar never falls back to literal "Tab"
-      $tabTitle = '{0} | {1}' -f $Name, $role
       Set-SpawnedTabTitle -SpawnOut $spawnOut -ExitCode $LASTEXITCODE -TabTitle $tabTitle
       Write-Host ("  OK: started {0} via PowerShell host" -f $Label) -ForegroundColor Green
       Write-Host ("  cwd {0}" -f $Cwd) -ForegroundColor DarkGray

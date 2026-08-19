@@ -36,6 +36,7 @@
 - `D-015`
 - `D-016`
 - `D-017`
+- `D-018`
 <!-- PPS:ACTIVE:END -->
 
 ## Authority Records
@@ -315,8 +316,17 @@
 - Supersedes: 验收前不得发布的旧等待状态；不改变 D-002 的 workbench-first 产品路线。
 - Affects: `live-workbench/`、`Install-WZ.ps1`、`open-project.ps1`、验证脚本、README/INSTALL/MAIN/状态文件、GitHub 仓库名与描述。
 
+### D-018 [active]
+
+- Summary: **原生 Agent `.exe/.com` 直 spawn，取消启动封面猫。** Init 读列表的行走猫保留且必须跟真实计数走。Agent 启动后屏幕所有权交给外部进程，工作台无法维持封面；再套 PowerShell 只付宿主税。`.cmd/.bat/.ps1` 仍走 PowerShell `-NoExit` 宿主（CreateProcess 不能把垫片当 argv0），同样不画猫。启动黑屏按 Agent 冷启动理解，不伪造百分比。
+- Source: 用户 2026-08-19 确认按有效性回顾推荐方案施工（方案 A）。
+- Scope: Init/F3/F6/F7/open-project 的 Agent 启动 argv；启动包装测试。
+- Supersedes: D-017 中「不可计数的外部 Agent 就绪阶段使用不定进度动画」这一启动封面切片；08-19 历史「原生 EXE 也必须走封面包装」。
+- Affects: `bootstrap.ps1`、`launch.lua`、`sidebar.ps1`、MAIN/README/cheatsheet、`test-splash-wrap.ps1`、`test-loading-progress.ps1`。
+
 ## Status Events
 
+- 2026-08-19: **D-018 原生 exe 直 spawn，撤掉 Agent 启动猫。** Init/F6/F7/向导与 open-project 对齐：`.exe/.com` 为 argv0；shim 只留 PowerShell `-NoExit`。启动黑屏属于 Agent 冷启动。
 - 2026-08-19: **逃生舱对抗加固。** wrap 去掉 WZ_Skill 特判；F8 路径改用 `config_dir` 而非写死 `~\.config`；舱内 `q` 取消而不误启第 1 家；JOURNAL 无 BOM 追加；标题清洗 `|`/换行；repair 创建失败时仍能开壳；wz.ps1 Ensure 加 try。页签仍禁止用第三列冒充现场 Agent。
 - 2026-08-19: **逃生舱补日记 + 报错提示 F8。** 每次 F8 向 `repair\JOURNAL.md` 追加时间/Agent/加载残片（超 80KB 截尾）。模块加载失败 toast、Init 零 Agent、F6 门禁、安装器 Doctor 失败、Init 崩溃包装均提示 F8。F8 的 spawn cwd 改为 workbench（不依赖 repair 目录已存在）。
 - 2026-08-19: **F8 / wz 接到安装根 `repair\`。** cwd = `~\.config\wezterm\repair`（产品设施，不进 desk-roots）。页签 `WZ_Repair | 所选 Agent`。`status.lua` 删除「Shell/App → 第三列 Agent」。`wz.cmd doctor|report|repair` 与 F8/Escape-WZ 共用 escape-pod。安装器只补 INSTALL.txt 与缺失的 INCIDENT.md，不覆盖已有事故笔记。
@@ -398,6 +408,6 @@
 
 - Method: `M-004`
 - Fact: `F-015`
-- Decision: `D-017`
+- Decision: `D-018`
 
 These hints are conveniences, not authority. Search before allocating an ID.

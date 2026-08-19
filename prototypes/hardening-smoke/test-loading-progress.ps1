@@ -20,8 +20,9 @@ function Check([bool]$Condition, [string]$Name) {
 }
 
 $build = Get-FunctionText 'Build-Rows'
-$splash = Get-FunctionText 'Get-AgentSplashScript'
 $launch = Get-FunctionText 'Get-AgentLaunchArgv'
+$native = Get-FunctionText 'Test-WzNativeAgentExe'
+$shim = Get-FunctionText 'Get-AgentShimSpawn'
 
 Check (([regex]::Matches($build, 'Start-LoadingPlan')).Count -eq 1) 'Build-Rows creates exactly one global progress plan'
 Check ($build -match '\$loadUnits\s*=.*\+\s*2') 'global total reserves merge and publication phases'
@@ -29,9 +30,9 @@ Check ($build -match 'Read-SessionSummaries\s+-Files\s+\$grokFiles') 'session ad
 Check ($build -match 'Read-KimiSessionSummaries\s+-WdDirs\s+\$kimiDirs') 'directory adapter receives one pre-enumerated directory set'
 Check ($build -match 'Read-CodexSessionSummaries\s+-Files\s+\$codexFiles') 'bounded rollout set is reused instead of rescanned'
 Check ($build.IndexOf('$script:Rows = $out') -lt $build.IndexOf("Step-LoadingPlan -Label 'ready'")) '100 percent occurs only after rows are published'
-Check ($splash -match 'indeterminate' -and $splash -match 'handing off to agent process') 'unknown Agent startup is explicitly indeterminate'
-Check ($splash -notmatch "Write-Host\s+.*%" -and $splash -notmatch "'100%'" ) 'Agent startup splash emits no fake percentage'
-Check ($splash -notmatch 'Start-Sleep') 'session splash never sleeps before handing off to the CLI'
-Check ($launch -match 'Get-AgentSplashSpawn' -and $launch -notmatch 'Test-WzNativeAgentExe') 'every Agent launch including native EXE uses the cover splash'
+Check ($native -match 'exe\|com') 'native detector only accepts .exe/.com'
+Check ($launch -match 'Test-WzNativeAgentExe' -and $launch -match 'Get-AgentShimSpawn') 'native EXE is detected; shims keep a host wrap'
+Check ($launch -notmatch 'Get-AgentSplashSpawn' -and $launch -notmatch 'Get-AgentSplashScript') 'Agent launch no longer paints a cover splash'
+Check ($shim -notmatch 'Start-Sleep' -and $shim -notmatch '/\\_/\\') 'shim host never sleeps and never draws a cat'
 
 Write-Host 'ALL LOADING-PROGRESS TESTS PASSED'

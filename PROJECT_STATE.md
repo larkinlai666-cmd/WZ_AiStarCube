@@ -14,8 +14,8 @@
 - Capsule: CONTEXT.md
 - Coverage: CONTEXT.md
 - Blockers: none
-- Next: Pushed 1e2774b. User: restart WezTerm; F8 = WZ_Repair | chosen agent. P-006 still pending.
-- Updated: 2026-08-19T17:30:00Z
+- Next: D-018 native exe direct spawn. User: restart WezTerm. P-006 still pending.
+- Updated: 2026-08-19T19:10:00Z
 - Device: SK-20240507HWFH
 
 ## Objective

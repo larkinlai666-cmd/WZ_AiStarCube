@@ -4,7 +4,7 @@
 
 - Methods: M-001, M-002, M-003
 - Facts: F-001, F-002, F-003, F-005, F-006, F-007, F-008, F-009, F-010, F-011, F-012, F-013, F-014
-- Decisions: D-001, D-002, D-003, D-004, D-005, D-006, D-007, D-008, D-009, D-010, D-011, D-012, D-013, D-014, D-015, D-016, D-017
+- Decisions: D-001, D-002, D-003, D-004, D-005, D-006, D-007, D-008, D-009, D-010, D-011, D-012, D-013, D-014, D-015, D-016, D-017, D-018
 - Sources: none
 - Assets: none
 - Components: C-ROOT, C-WB, C-REF-WEZ, C-SKILL, C-LAUNCH
@@ -26,9 +26,7 @@
 - 批准/修订 MAIN 验收清单（P-006，已按现行设计重写）→ 升格 D 后逐项 live 打勾（含 A1–C4 冒烟：新标签 Init 两步流、未绑定页签 F6 只弹 toast）.
 ## Proposals
 
-- P-006: MAIN acceptance checklist — user approve as D.
-- P-011: 加固审查 R2 — 已施工全量并回归绿（M2-1~6 + L2-1/2/3/5/7/9；L2-4/6/8 留观察），待用户 live 终验.
-- D-017 is active: adversarial distillation, Windows-only rename and remote publication are approved work, not pending feedback.
+- P-006: MAIN checklist pending D. P-011 R2 landed; L2-4/6/8 observe.
 
 ## Working Assumptions
 
@@ -73,7 +71,8 @@
 | D-014 | live `options.lua` 单击开链接绑定 + `sidebar.ps1` launcher 护栏 + DECISIONS D-014 | Present |
 | D-015 | MAIN 新建向导四步契约 + live `bootstrap.ps1` Agent/CLI 单选与仅 `[0]` 父目录入口 + DECISIONS D-015 | Present |
 | D-016 | MAIN 开放探测/固定 COMMAND 网格契约 + live `agent-discovery.ps1`/Init/F3/F6/installer/sidebar/open-project + 无 Grok Dashboard | Present |
-| D-017 | Windows-only 四原则蒸馏 + 真实读取进度/不定启动动画 + 对抗回归 + `_win` 发布边界 | Present |
+| D-017 | Windows-only 蒸馏 + 真实读取进度 + `_win` 发布边界 | Present |
+| D-018 | 原生 Agent exe 直 spawn，取消启动封面猫 | Present |
 
 ## Next Action
-Pushed 1e2774b (F8 repair pod). User: 重启 WezTerm 验 F8 页签与 JOURNAL。P-006 待批。pps-application-review.md 未纳入本次提交。
+D-018 landed: native Agent exe direct spawn. Restart WezTerm. P-006 still pending.
