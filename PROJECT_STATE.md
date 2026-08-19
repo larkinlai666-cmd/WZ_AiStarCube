@@ -14,8 +14,8 @@
 - Capsule: CONTEXT.md
 - Coverage: CONTEXT.md
 - Blockers: none
-- Next: User live acceptance: confirm Init now lists Agy, Codex, Grok and Kimi, then retry the reported Codex resume row.
-- Updated: 2026-08-16T15:46:41Z
+- Next: User: restart WezTerm (Init five agents), then approve push — remote idle at 1d6e252, fast-forward only, zero conflict. Incident report: docs/agent-incident-review.md. Optional pending: verify-gate.ps1 / pre-commit hook.
+- Updated: 2026-08-19T16:12:00Z
 - Device: SK-20240507HWFH
 
 ## Objective

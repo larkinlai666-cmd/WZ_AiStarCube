@@ -97,7 +97,7 @@ Binding table on machine: `workbench\desk-roots.tsv`. Marker: `<project>\.wz-pro
 
 #### 2 · Agent 开放探测与可选续聊适配器（D-016）
 
-候选列表**不写死产品类型**。每次 Init 冷启动（或两步中的任一步按 `r`）由 `agent-discovery.ps1` 重新枚举，并合并宿主进程 PATH 与最新用户/系统持久化 PATH，因此安装器更新 PATH 后无需重启整个 WezTerm。自动证据包括 npm/Python 包元数据、可执行文件版本元数据、`*.wz-agent.json`；对于没有包清单/版本资源、安装在用户级专属 `app\bin` 的独立 EXE，则以受字节上限约束的静态能力词扫描识别，结果按路径+大小+修改时间缓存，相同负载别名折叠到与应用目录最匹配的主命令。探测过程从不执行候选程序，判断词只描述 AI/coding-agent 能力，不含产品名。仍完全静默的独立二进制可在本地 TSV 写 `id<TAB>label<TAB>command-or-absolute-path`（第三列支持 `|` 分隔别名），同样无需改源码。仓库自带 `agent-registry.tsv` 只有协议说明，不带产品白名单。
+候选列表**不写死产品类型**。每次 Init 冷启动（或两步中的任一步按 `r`）由 `agent-discovery.ps1` 重新枚举，并合并宿主进程 PATH 与最新用户/系统持久化 PATH，因此安装器更新 PATH 后无需重启整个 WezTerm。自动证据包括 npm/Python 包元数据、可执行文件版本元数据、`*.wz-agent.json`；对于没有包清单/版本资源、安装在用户级专属 `app\bin` 的独立 EXE，小文件做受限前缀扫描（字节+时间封顶，指纹缓存）；超过上限的专属主命令以「用户目录 + 与应用文件夹名匹配」为受限证据，禁止把 100MB+ 自包含 CLI 整文件读进 Init。相同负载别名折叠到与应用目录最匹配的主命令。探测过程从不执行候选程序，判断词只描述 AI/coding-agent 能力，不含产品名。完整探测结果缓存 20 秒（Init 按 `r` 强制重扫）。会话启动先画 1 帧不定进度猫再立刻 exec（零 Sleep），猫留在屏上直到 TUI 接管；禁止把动画睡在真实启动前面。仍完全静默的独立二进制可在本地 TSV 写 `id<TAB>label<TAB>command-or-absolute-path`（第三列支持 `|` 分隔别名），同样无需改源码。仓库自带 `agent-registry.tsv` 只有协议说明，不带产品白名单。
 
 下表只记录已有的**续聊参数适配器**，不是发现清单；没有专属适配器的新 Agent 仍可等权展示并以项目 cwd 正常新开：
 

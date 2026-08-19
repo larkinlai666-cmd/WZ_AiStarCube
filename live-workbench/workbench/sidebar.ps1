@@ -986,14 +986,17 @@ function Start-AgentHere {
   }
   $agentDef = @(Get-DetectedAgents | Where-Object { $_.Id -eq $agent } | Select-Object -First 1)
   $agentTitle = if ($agentDef.Count -gt 0) { [string]$agentDef[0].Label } else { $agent }
-  # Generic PowerShell host safely launches .exe/.cmd/.ps1 shims alike.
   $cwdEsc = $WorkDir.Replace("'", "''")
   $exeEsc = $exe.Replace("'", "''")
-  $psCmd = @"
-Set-Location -LiteralPath '$cwdEsc'
-try { & '$exeEsc' } catch { Write-Host `$_.Exception.Message -ForegroundColor Red }
-"@
-  $progArgs = @('powershell.exe', '-NoLogo', '-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', $psCmd)
+  $labelEsc = $agentTitle.Replace("'", "''")
+  $splash = "try { [Console]::Clear() } catch {}; Write-Host ''; Write-Host '   /\_/\' -ForegroundColor Magenta; Write-Host '  ( o.o )' -ForegroundColor Magenta; Write-Host '   > ^ <' -ForegroundColor Magenta; Write-Host '  handing off to agent process...' -ForegroundColor DarkGray; Write-Host ('  $labelEsc') -ForegroundColor Gray"
+  if ($exe -match '\.(?i:exe|com)$') {
+    $psCmd = "$splash; Set-Location -LiteralPath '$cwdEsc'; & '$exeEsc'"
+    $progArgs = @('powershell.exe', '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $psCmd)
+  } else {
+    $psCmd = "$splash; Set-Location -LiteralPath '$cwdEsc'; try { & '$exeEsc' } catch { Write-Host `$_.Exception.Message -ForegroundColor Red }"
+    $progArgs = @('powershell.exe', '-NoLogo', '-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', $psCmd)
+  }
   $ok = Invoke-WezSpawn -WorkDir $WorkDir -ProgArgs $progArgs
   if ($ok) {
     Write-Host ("  OK: {0} @ {1}" -f $agentTitle, $Label) -ForegroundColor Green

@@ -21,6 +21,7 @@ function Check([bool]$Condition, [string]$Name) {
 
 $build = Get-FunctionText 'Build-Rows'
 $splash = Get-FunctionText 'Get-AgentSplashScript'
+$launch = Get-FunctionText 'Get-AgentLaunchArgv'
 
 Check (([regex]::Matches($build, 'Start-LoadingPlan')).Count -eq 1) 'Build-Rows creates exactly one global progress plan'
 Check ($build -match '\$loadUnits\s*=.*\+\s*2') 'global total reserves merge and publication phases'
@@ -30,5 +31,7 @@ Check ($build -match 'Read-CodexSessionSummaries\s+-Files\s+\$codexFiles') 'boun
 Check ($build.IndexOf('$script:Rows = $out') -lt $build.IndexOf("Step-LoadingPlan -Label 'ready'")) '100 percent occurs only after rows are published'
 Check ($splash -match 'indeterminate' -and $splash -match 'handing off to agent process') 'unknown Agent startup is explicitly indeterminate'
 Check ($splash -notmatch "Write-Host\s+.*%" -and $splash -notmatch "'100%'" ) 'Agent startup splash emits no fake percentage'
+Check ($splash -notmatch 'Start-Sleep') 'session splash never sleeps before handing off to the CLI'
+Check ($launch -match 'Get-AgentSplashSpawn' -and $launch -notmatch 'Test-WzNativeAgentExe') 'every Agent launch including native EXE uses the cover splash'
 
 Write-Host 'ALL LOADING-PROGRESS TESTS PASSED'

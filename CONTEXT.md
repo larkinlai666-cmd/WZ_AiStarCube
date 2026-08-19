@@ -76,4 +76,4 @@
 | D-017 | Windows-only 四原则蒸馏 + 真实读取进度/不定启动动画 + 对抗回归 + `_win` 发布边界 | Present |
 
 ## Next Action
-用户重开 Init，确认开放探测区列出本机 Agy/Codex/Grok/Kimi，并重试已报告的 Codex 会话；工作流已补持久化 PATH 重读、用户级独立 CLI 静态能力探测及 resume 版本兼容门禁，后续仅按真实交互反馈增量修正。
+归零事故两层修复 + 红线七条 + e2e 断言落地，六套回归全绿；报告 docs/agent-incident-review.md。User: ① 重启 WezTerm 终验五家等权；② 批准推送（远端静止，纯快进零冲突）；③ 可选：verify-gate 单入口/pre-commit 钩子等建议项待批。

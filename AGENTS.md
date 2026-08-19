@@ -2,6 +2,18 @@
 
 项目终点是当前个人项目产物可验证地完成，不是建设长期知识库或多人协作平台。
 
+## 施工红线（任何 Agent 必读，交付前逐项自查）
+
+以下每条都由真实事故换来，违反任意一条的交付视为未完成：
+
+1. **编辑 `bootstrap.ps1` / `sidebar.ps1` / `agent-discovery.ps1` 后，第一件事必须运行** `prototypes/hardening-smoke/bom-and-parse.ps1`（编辑器会剥 BOM，PS 5.1 按 GBK 误读中文注释即 parse 爆炸）。
+2. **交付前必跑三件套**：`bom-and-parse` → 管道冒烟（`printf 'q\n'` 进 live bootstrap，exit 0）→ `test-init-e2e.ps1`（端到端行为断言）。改了启动链另加 `wezterm ls-fonts`；改了 lua 另加 `lua_balance_check.py` 与 `scripts/wezterm_load_guard.ps1`。
+3. **改了调用约定，必须连带真实调用方一起测**。只测被改文件、绕开调用方的测试不算回归（2026-08-19 splat 事故：单测全绿、真实 Init 全灭）。
+4. **跨脚本调用只许内联命名参数，禁止数组 splat**（PS 5.1 对数组 splat 做位置绑定，参数错位且静默）。
+5. **禁止无日志的空 catch**。关键路径 catch 至少落一行 debug 日志（参见 bootstrap 的 `discovery-debug.log` 模式）；优雅降级让故障隐身，比崩溃更难查。
+6. **动 live（`~\.config\wezterm`）前先快照**（`cp` 备份或依赖 Install-WZ 的自动备份），改完必须 live→`live-workbench/` 镜像同步并 md5 对拍。
+7. **冒烟输出解析要认多帧现实**：加载帧在前、终态帧在后，断言永远针对最后一帧（参见 `test-init-e2e.ps1` 的注释）。
+
 ## L0 恢复
 
 1. Windows 运行 `powershell -ExecutionPolicy Bypass -File scripts/resume_packet.ps1`；其他系统运行 `bash scripts/resume_packet.sh`。

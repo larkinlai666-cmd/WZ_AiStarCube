@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Discover locally installed AI agent CLIs without an agent-name whitelist.
@@ -10,21 +10,30 @@
   optional local TSV override. Static binary verdicts use a bounded fingerprint
   cache, so the result is safe and fast to call on every Init cold start.
 #>
-[CmdletBinding()]
+# PositionalBinding=$false: callers MUST use named arguments. An array-splat
+# like @('-WorkbenchDir', $path) binds positionally on PS 5.1 and once silently
+# put the path into UserPathOverride (wiping every discovery source → zero
+# agents). With this, positional misuse fails loudly instead of misbinding.
+[CmdletBinding(PositionalBinding = $false)]
 param(
   [switch]$AsJson,
   [switch]$AsTsv,
   [string]$WorkbenchDir = $PSScriptRoot,
   [switch]$ProcessPathOnly,
-  [string]$UserPathOverride
+  [string]$UserPathOverride,
+  [switch]$Refresh
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
 $script:WzCommandCache = @{}
 $script:WzMaxJsonBytes = 1MB
 $script:WzMaxTextChars = 131072
-$script:WzMaxBinaryBytes = 512MB
-$script:WzBinaryScanBudget = 768MB
+# Self-contained CLIs on this machine are 130MB+; the capability string in
+# grok.exe sits at ~119MB. Init must never slur that into a cold start.
+$script:WzMaxBinaryBytes = 32MB
+$script:WzMaxBinaryScanBytes = 8MB
+$script:WzMaxBinaryScanMs = 400
+$script:WzBinaryScanBudget = 24MB
 $script:WzBinaryBytesScanned = 0L
 $script:WzSearchPathDirectories = @()
 $script:WzPersistedUserPathKeys = @{}
@@ -38,6 +47,12 @@ $script:WzBinaryCachePath = if ($env:LOCALAPPDATA) {
 } else {
   Join-Path $WorkbenchDir 'agent-discovery-cache.json'
 }
+$script:WzInventoryCachePath = if ($env:LOCALAPPDATA) {
+  Join-Path $env:LOCALAPPDATA 'WZ_AiStarCube\agent-inventory.json'
+} else {
+  Join-Path $WorkbenchDir 'agent-inventory.json'
+}
+$script:WzInventoryTtlSeconds = 20
 
 function ConvertTo-WzSafeField {
   param(
@@ -185,6 +200,14 @@ function Get-WzPathDirectories {
   return $out.ToArray()
 }
 
+function ConvertTo-WzCacheTicks {
+  param($Value)
+  if ($null -eq $Value) { return [int64]0 }
+  $ticks = [int64]0
+  if ([int64]::TryParse([string]$Value, [ref]$ticks)) { return $ticks }
+  return [int64]0
+}
+
 function Initialize-WzBinaryCache {
   if ($script:WzBinaryCacheLoaded) { return }
   $script:WzBinaryCacheLoaded = $true
@@ -195,8 +218,8 @@ function Initialize-WzBinaryCache {
     if (-not $path) { continue }
     $script:WzBinaryCache[$path.ToLowerInvariant()] = [pscustomobject]@{
       Path = $path
-      Length = [long]$entry.length
-      LastWriteUtcTicks = [long]$entry.lastWriteUtcTicks
+      Length = [int64](ConvertTo-WzCacheTicks $entry.length)
+      LastWriteUtcTicks = [int64](ConvertTo-WzCacheTicks $entry.lastWriteUtcTicks)
       Detected = [bool]$entry.detected
     }
   }
@@ -205,17 +228,26 @@ function Initialize-WzBinaryCache {
 function Save-WzBinaryCache {
   if (-not $script:WzBinaryCacheDirty) { return }
   $temp = $null
+  $backup = $null
   try {
     $parent = Split-Path -Parent $script:WzBinaryCachePath
     if (-not (Test-Path -LiteralPath $parent -PathType Container)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
     $entries = @($script:WzBinaryCache.Values | Sort-Object Path | Select-Object -First 128 | ForEach-Object {
-      [ordered]@{ path = $_.Path; length = $_.Length; lastWriteUtcTicks = $_.LastWriteUtcTicks; detected = $_.Detected }
+      [ordered]@{
+        path = $_.Path
+        length = [int64]$_.Length
+        lastWriteUtcTicks = [string]$_.LastWriteUtcTicks
+        detected = [bool]$_.Detected
+      }
     })
-    $json = ConvertTo-Json -InputObject ([ordered]@{ version = 1; entries = $entries }) -Depth 4 -Compress
+    $json = ConvertTo-Json -InputObject ([ordered]@{ version = 2; entries = $entries }) -Depth 4 -Compress
     $temp = $script:WzBinaryCachePath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
     [System.IO.File]::WriteAllText($temp, $json, (New-Object System.Text.UTF8Encoding($false)))
     if (Test-Path -LiteralPath $script:WzBinaryCachePath -PathType Leaf) {
-      [System.IO.File]::Replace($temp, $script:WzBinaryCachePath, $null, $true)
+      # File.Replace backupFile=null throws; a stale cache then never updates
+      # and Init re-reads 100MB+ CLIs on every cold start.
+      $backup = $script:WzBinaryCachePath + '.swap.' + $PID + '.' + [guid]::NewGuid().ToString('N')
+      [System.IO.File]::Replace($temp, $script:WzBinaryCachePath, $backup, $true)
     } else {
       [System.IO.File]::Move($temp, $script:WzBinaryCachePath)
     }
@@ -223,6 +255,63 @@ function Save-WzBinaryCache {
   } catch {}
   finally {
     if ($temp -and (Test-Path -LiteralPath $temp -PathType Leaf)) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+    if ($backup -and (Test-Path -LiteralPath $backup -PathType Leaf)) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }
+  }
+}
+
+function Read-WzInventoryCache {
+  if ($Refresh -or $script:WzEffectiveProcessPathOnly -or $script:WzUserPathOverrideProvided) { return $null }
+  $cache = Read-WzJsonFile -Path $script:WzInventoryCachePath
+  if ($null -eq $cache -or -not $cache.agents -or -not $cache.savedUtc) { return $null }
+  $saved = [datetime]::MinValue
+  if (-not [datetime]::TryParse([string]$cache.savedUtc, [ref]$saved)) { return $null }
+  if (([datetime]::UtcNow - $saved.ToUniversalTime()).TotalSeconds -gt [double]$script:WzInventoryTtlSeconds) { return $null }
+  # Plain array, NOT List[object]: returning a Generic.List through the
+  # pipeline triggers a PS 5.1 DLR binder bug (PSEnumerableBinder.MaybeDebase
+  # → ArgumentException "argument types do not match") when the caller session
+  # (bootstrap) has hot DLR call sites — zero agents, silently (2026-08-19).
+  $rows = @()
+  foreach ($agent in @($cache.agents)) {
+    $exe = [string]$agent.exe
+    if (-not $exe -or -not (Test-Path -LiteralPath $exe -PathType Leaf)) { return $null }
+    $rows += [pscustomobject]@{
+      Id = [string]$agent.id
+      Label = [string]$agent.label
+      Exe = $exe
+      Source = [string]$agent.source
+    }
+  }
+  return ,$rows
+}
+
+function Save-WzInventoryCache {
+  param([object[]]$Agents)
+  if ($script:WzEffectiveProcessPathOnly -or $script:WzUserPathOverrideProvided) { return }
+  $temp = $null
+  $backup = $null
+  try {
+    $parent = Split-Path -Parent $script:WzInventoryCachePath
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    $payload = [ordered]@{
+      version = 1
+      savedUtc = [datetime]::UtcNow.ToString('o')
+      agents = @($Agents | ForEach-Object {
+        [ordered]@{ id = [string]$_.Id; label = [string]$_.Label; exe = [string]$_.Exe; source = [string]$_.Source }
+      })
+    }
+    $json = ConvertTo-Json -InputObject $payload -Depth 4 -Compress
+    $temp = $script:WzInventoryCachePath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    [System.IO.File]::WriteAllText($temp, $json, (New-Object System.Text.UTF8Encoding($false)))
+    if (Test-Path -LiteralPath $script:WzInventoryCachePath -PathType Leaf) {
+      $backup = $script:WzInventoryCachePath + '.swap.' + $PID + '.' + [guid]::NewGuid().ToString('N')
+      [System.IO.File]::Replace($temp, $script:WzInventoryCachePath, $backup, $true)
+    } else {
+      [System.IO.File]::Move($temp, $script:WzInventoryCachePath)
+    }
+  } catch {}
+  finally {
+    if ($temp -and (Test-Path -LiteralPath $temp -PathType Leaf)) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+    if ($backup -and (Test-Path -LiteralPath $backup -PathType Leaf)) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }
   }
 }
 
@@ -237,17 +326,27 @@ function Test-WzStaticBinaryAgentMetadata {
       return [bool]$cached.Detected
     }
   }
-  if (($script:WzBinaryBytesScanned + $File.Length) -gt $script:WzBinaryScanBudget) { return $false }
-  $script:WzBinaryBytesScanned += $File.Length
+  $scanCap = [int64]$script:WzMaxBinaryScanBytes
+  if ($scanCap -le 0) { $scanCap = [int64]8MB }
+  $planned = [Math]::Min([int64]$File.Length, $scanCap)
+  if (($script:WzBinaryBytesScanned + $planned) -gt $script:WzBinaryScanBudget) { return $false }
+  $script:WzBinaryBytesScanned += $planned
   $patterns = @('coding agent', 'ai agent', 'agentic coding', 'agentic software', 'ai coding', 'code assistant', 'terminal assistant')
   $detected = $false
   $stream = $null
+  $deadline = [datetime]::UtcNow.AddMilliseconds([Math]::Max(50, [int]$script:WzMaxBinaryScanMs))
   try {
     $stream = [System.IO.File]::Open($File.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-    $buffer = New-Object byte[] (4MB)
+    $chunk = [Math]::Min(1MB, [int]$scanCap)
+    $buffer = New-Object byte[] $chunk
     $encoding = [System.Text.Encoding]::ASCII
     $carry = ''
-    while (($count = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+    $readTotal = [int64]0
+    while ($readTotal -lt $scanCap -and [datetime]::UtcNow -lt $deadline) {
+      $want = [int][Math]::Min($buffer.Length, $scanCap - $readTotal)
+      $count = $stream.Read($buffer, 0, $want)
+      if ($count -le 0) { break }
+      $readTotal += $count
       $text = $carry + $encoding.GetString($buffer, 0, $count)
       foreach ($pattern in $patterns) {
         if ($text.IndexOf($pattern, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $detected = $true; break }
@@ -483,11 +582,20 @@ function Get-WzInstalledAgents {
       $primary = @($group.Group | Sort-Object @{ Expression = 'Score'; Descending = $true }, @{ Expression = { $_.File.Name.Length }; Descending = $false }, @{ Expression = { $_.File.Name }; Descending = $false } | Select-Object -First 1)
       if ($primary.Count -eq 0) { continue }
       $exeFile = [System.IO.FileInfo]$primary[0].File
-      $hasCapability = if ($exeFile.Extension -ieq '.exe') {
-        Test-WzStaticBinaryAgentMetadata -File $exeFile
+      $score = [int]$primary[0].Score
+      $hasCapability = $false
+      if ($exeFile.Extension -ieq '.exe') {
+        if ($score -ge 2 -and [int64]$exeFile.Length -gt [int64]$script:WzMaxBinaryScanBytes) {
+          # Dedicated user app\bin primary (name matches the app folder). A
+          # 100MB+ self-contained CLI keeps its capability string far past any
+          # Init-safe prefix, so path-shape is the bounded evidence.
+          $hasCapability = $true
+        } else {
+          $hasCapability = Test-WzStaticBinaryAgentMetadata -File $exeFile
+        }
       } else {
         $text = Read-WzTextPrefix -Path $exeFile.FullName
-        ($null -ne $text -and (Test-WzAgentMetadata $text))
+        $hasCapability = ($null -ne $text -and (Test-WzAgentMetadata $text))
       }
       if ($hasCapability) {
         Add-WzCandidate -Id $exeFile.BaseName -Label (ConvertTo-WzAgentLabel $exeFile.BaseName) -Exe $exeFile.FullName -Source 'user-path:static-capability'
@@ -515,7 +623,13 @@ function Get-WzInstalledAgents {
   return @($found.Values | Sort-Object Label, Id)
 }
 
-$agents = @(Get-WzInstalledAgents -Root $WorkbenchDir)
+$cachedAgents = Read-WzInventoryCache
+if ($null -ne $cachedAgents) {
+  $agents = @($cachedAgents)
+} else {
+  $agents = @(Get-WzInstalledAgents -Root $WorkbenchDir)
+  Save-WzInventoryCache -Agents $agents
+}
 if ($AsTsv) {
   try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch {}
   foreach ($agent in $agents) {

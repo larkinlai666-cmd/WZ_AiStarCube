@@ -4,7 +4,8 @@ $files = @(
   'G:\GrokProject\WZ_Skill\live-workbench\workbench\profile-snippet.ps1',
   'G:\GrokProject\WZ_Skill\live-workbench\workbench\cheatsheet.ps1',
   'C:\Users\Administrator\.config\wezterm\workbench\profile-snippet.ps1',
-  'C:\Users\Administrator\.config\wezterm\workbench\cheatsheet.ps1'
+  'C:\Users\Administrator\.config\wezterm\workbench\cheatsheet.ps1',
+  'C:\Users\Administrator\.config\wezterm\workbench\agent-discovery.ps1'
 )
 foreach ($f in $files) {
   if (-not (Test-Path $f)) { Write-Host "MISS $f"; continue }

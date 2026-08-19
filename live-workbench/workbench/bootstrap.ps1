@@ -87,6 +87,12 @@ foreach ($c in @(
   if ($c -and (Test-Path -LiteralPath $c)) { $script:Wez = $c; break }
 }
 
+function Get-NeighborParents {
+  # Location wizard used to probe sibling folders; that walk was removed.
+  # Keep an empty hook so Build-LocationOptions does not throw on every F3.
+  return @()
+}
+
 function Get-DefaultProjectsParent {
   # Product-neutral default; historical roots are read only for existing users.
   if ($env:WZ_PROJECTS_ROOT -and $env:WZ_PROJECTS_ROOT.Trim()) {
@@ -617,9 +623,7 @@ function Read-SessionSummaries {
     $last = if ($j.last_turn_summary) { [string]$j.last_turn_summary } else { '' }
 
     $diskBytes = Get-SessionDiskBytes -SessionDir $f.DirectoryName
-    $prompts = @(Get-RecentPrompts -SessionId ([string]$id) -SessionDir $f.DirectoryName -Count 3)
-    $excerpt = if ($prompts.Count -gt 0) { $prompts[0] } else { $last }
-    if ([string]::IsNullOrWhiteSpace($excerpt)) { $excerpt = $last }
+    $excerpt = $last
     $sessSummary = if ($j.session_summary) { [string]$j.session_summary } else { '' }
 
     $rows += [pscustomobject]@{
@@ -630,7 +634,7 @@ function Read-SessionSummaries {
       LastTurn = [string]$last; Excerpt = [string]$excerpt; GitRoot = [string]$gitRoot
       DiskBytes = [long]$diskBytes; SessionDir = $f.DirectoryName
       SessionSummary = $sessSummary
-      RecentPrompts = $prompts
+      RecentPrompts = @()
       SessionCwd = [string]$sessionCwd
       IsWeak = [bool](Test-WeakPath -Cwd $workPath)
     }
@@ -728,6 +732,19 @@ function Get-CodexRuntimeVersion {
   $key = $Exe.Trim().ToLowerInvariant()
   if ($script:CodexRuntimeVersions.ContainsKey($key)) { return [string]$script:CodexRuntimeVersions[$key] }
   $version = ''
+  $stamp = 0L
+  try { $stamp = [int64](Get-Item -LiteralPath $Exe).LastWriteTimeUtc.Ticks } catch {}
+  $verFile = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'WZ_AiStarCube\codex-runtime-version.txt' } else { '' }
+  if ($verFile -and (Test-Path -LiteralPath $verFile -PathType Leaf)) {
+    try {
+      $cached = [string](Get-Content -LiteralPath $verFile -TotalCount 1 -Encoding UTF8)
+      $parts = $cached -split '\|', 3
+      if ($parts.Count -ge 3 -and $parts[0] -eq $key -and $parts[1] -eq ([string]$stamp) -and $parts[2]) {
+        $script:CodexRuntimeVersions[$key] = $parts[2]
+        return $parts[2]
+      }
+    } catch {}
+  }
   try {
     # Launch-time capability probe only. Discovery remains metadata-only and
     # never executes candidates; this runs after the user explicitly picked
@@ -737,6 +754,13 @@ function Get-CodexRuntimeVersion {
     if ($m.Success) { $version = $m.Value }
   } catch {}
   $script:CodexRuntimeVersions[$key] = $version
+  if ($verFile -and $version -and $stamp -gt 0) {
+    try {
+      $dir = Split-Path -Parent $verFile
+      if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+      [System.IO.File]::WriteAllText($verFile, ($key + '|' + $stamp + '|' + $version), (New-Object System.Text.UTF8Encoding $false))
+    } catch {}
+  }
   return $version
 }
 
@@ -923,6 +947,7 @@ function Build-Rows {
   # Perf gate (2026-08-13): only scan stores of agents actually installed —
   # an uninstalled CLI's leftover files (e.g. old codex rollouts) taxed every
   # panel open with a full recursive scan whose sessions can never be launched.
+  Update-LoadingBar -Current 0 -Total 1 -Label 'discovering installed agents'
   $peers = @{}
   $peerIds = @()
   foreach ($p in @(Get-InstalledAgentPeers)) { $peers[$p.Id] = $true; $peerIds += $p.Id }
@@ -1759,19 +1784,34 @@ function Set-SpawnedTabTitle {
   try { & $script:Wez @('cli', 'set-tab-title', '--pane-id', "$paneId", $TabTitle) 2>$null | Out-Null } catch {}
 }
 
+function Test-WzNativeAgentExe {
+  param([string]$Exe)
+  if ([string]::IsNullOrWhiteSpace($Exe)) { return $false }
+  if ($Exe -notmatch '\.(?i:exe|com)$') { return $false }
+  return (Test-Path -LiteralPath $Exe -PathType Leaf)
+}
+
+function Invoke-WezCliSpawn {
+  param([string]$Cwd, [string[]]$Argv, [string]$TabTitle)
+  $spawn = @('cli', 'spawn', '--cwd', $Cwd, '--') + @($Argv)
+  $spawnOut = & $script:Wez @spawn 2>$null | Out-String
+  Set-SpawnedTabTitle -SpawnOut $spawnOut -ExitCode $LASTEXITCODE -TabTitle $TabTitle
+  return ($LASTEXITCODE -eq 0)
+}
+
+function Get-AgentLaunchArgv {
+  # Cover first, then start the CLI. A native .exe still goes through the
+  # splash host so the 2-5s TUI boot is not a black pane. The splash itself
+  # must not Sleep — that would serialize animation in front of real work.
+  param([string]$Exe, [string[]]$ExeArgs, [string]$AgentLabel, [string]$Project)
+  return @(Get-AgentSplashSpawn -Exe $Exe -ExeArgs $ExeArgs -AgentLabel $AgentLabel -Project $Project)
+}
+
 function Get-AgentSplashScript {
-  # D-012-era launch UX: Init closes right after a successful spawn, and the
-  # agent CLI then boots for seconds over a BLACK void. 2026-08-14 user: give
-  # EVERY agent the Init walking cat (那只 loading 猫猫读条), not a static card.
-  # Animated 5-frame *indeterminate* splash (~300ms) painted BEFORE the agent
-  # starts. A percentage here was false telemetry: the wrapper cannot know an
-  # arbitrary interactive CLI's readiness and 100% could appear seconds before
-  # its first paint. Counted file/session work uses the real global progress
-  # axis; process handoff deliberately shows no percentage.
-  # Redirected hosts (smoke tests) get one static frame — no cursor math there.
-  # Template is a SINGLE-quoted here-string: only the __WZ_SPLASH_*_7F3A__
-  # tokens are substituted (L2-7: unguessable tokens kill chain-replace
-  # hazards), so inner $__vars reach the spawned wrapper verbatim.
+  # Design: mask the stiff empty pane while the agent process loads.
+  # One immediate indeterminate frame, zero Sleep, no Clear — the cat stays
+  # until a full-screen TUI takes the console. Line-REPL adapters (DeepSeek)
+  # clear immediately before invoke so the frame does not become residue.
   param([string]$AgentLabel, [string]$Project)
   $al = $AgentLabel.Replace("'", "''")
   $pj = $Project.Replace("'", "''")
@@ -1782,42 +1822,22 @@ $__pj = '__WZ_SPLASH_PROJ_7F3A__'
 $__w = 80
 try { $__w = [Console]::WindowWidth } catch {}
 $__bw = [Math]::Min(44, [Math]::Max(16, $__w - 26))
-$__redir = $false
-try { $__redir = [Console]::IsOutputRedirected } catch {}
-$__frames = 5
-if ($__redir) { $__frames = 1 }
-$__y = 0
-for ($__f = 0; $__f -lt $__frames; $__f++) {
-  $frac = 1.0
-  if ($__frames -gt 1) { $frac = $__f / ($__frames - 1) }
-  $pulse = [Math]::Max(3, [int]($__bw / 6))
-  $start = [int](($__bw - $pulse) * $frac)
-  $bar = ([string][char]0x2591) * $start + ([string][char]0x2588) * $pulse + ([string][char]0x2591) * ($__bw - $start - $pulse)
-  $face = '( -.- )'
-  $legs = ' > ^ <~'
-  if ($__f % 2 -eq 0) { $face = '( o.o )'; $legs = ' > ^ <' }
-  $pad = ' ' * (2 + [int](($__bw - 8) * $frac))
-  try {
-    if (-not $__redir) {
-      if ($__f -eq 0) { $__y = [Console]::CursorTop } else { [Console]::SetCursorPosition(0, $__y) }
-    }
-    Write-Host ''
-    Write-Host ($pad + ' /\_/\') -ForegroundColor Magenta
-    Write-Host ($pad + $face) -ForegroundColor Magenta
-    Write-Host ($pad + $legs) -ForegroundColor Magenta
-    Write-Host ('  [' + $bar + ']') -ForegroundColor Magenta
-    Write-Host ('  ' + $__pj + ' · ' + $__al) -ForegroundColor Gray
-    Write-Host '  handing off to agent process...' -ForegroundColor DarkGray
-  } catch {}
-  if ($__frames -gt 1 -and $__f -lt ($__frames - 1)) { Start-Sleep -Milliseconds 75 }
-}
-try { [Console]::Clear() } catch {}
+$bar = ([string][char]0x2591) * 2 + ([string][char]0x2588) * 6 + ([string][char]0x2591) * [Math]::Max(8, $__bw - 8)
+try {
+  Write-Host ''
+  Write-Host '   /\_/\' -ForegroundColor Magenta
+  Write-Host '  ( o.o )' -ForegroundColor Magenta
+  Write-Host '   > ^ <' -ForegroundColor Magenta
+  Write-Host ('  [' + $bar + ']') -ForegroundColor Magenta
+  Write-Host ('  ' + $__pj + ' · ' + $__al) -ForegroundColor Gray
+  Write-Host '  handing off to agent process...' -ForegroundColor DarkGray
+} catch {}
 '@
   return $tpl.Replace('__WZ_SPLASH_AGENT_7F3A__', $al).Replace('__WZ_SPLASH_PROJ_7F3A__', $pj)
 }
 
 function Get-AgentSplashSpawn {
-  # Spawn argv for: powershell -NoLogo -Command "<splash>; & '<exe>' <args...>".
+  # Spawn argv for: powershell -NoLogo -NoProfile -Command "<splash>; & '<exe>' <args...>".
   # No -NoExit → when the agent exits, the pane closes (parity with direct
   # spawn today). argv0 is real powershell.exe (no .cmd-shim freeze hazard).
   param([string]$Exe, [string[]]$ExeArgs, [string]$AgentLabel, [string]$Project)
@@ -1827,7 +1847,7 @@ function Get-AgentSplashSpawn {
     $argStr = ' ' + (($ExeArgs | ForEach-Object { "'" + ([string]$_).Replace("'", "''") + "'" }) -join ' ')
   }
   $psCmd = (Get-AgentSplashScript -AgentLabel $AgentLabel -Project $Project) + "`r`n& $exeLit$argStr"
-  return @('powershell.exe', '-NoLogo', '-Command', $psCmd)
+  return @('powershell.exe', '-NoLogo', '-NoProfile', '-Command', $psCmd)
 }
 
 function Start-GrokTab {
@@ -1864,19 +1884,12 @@ function Start-GrokTab {
   $fullArgs = @(); if ($GrokArgs) { $fullArgs += $GrokArgs }
   if ($script:Wez -and (Test-WezAlive)) {
     $proj = Split-Path -Leaf $Cwd
-    $spawn = @('cli', 'spawn')
-    $spawn += @('--cwd', $Cwd)
-    $spawn += '--'
-    $spawn += Get-AgentSplashSpawn -Exe $script:Grok -ExeArgs $fullArgs -AgentLabel 'Grok' -Project $proj
+    $tabTitle = '{0} | Grok' -f $proj
     try {
-      $spawnOut = & $script:Wez @spawn 2>$null | Out-String
-      # Tab role suffix is agent-specific (status.lua parses "Project | Role");
-      # each Start-*Tab sets its own — this one is Grok only
-      $tabTitle = '{0} | Grok' -f $proj
-      Set-SpawnedTabTitle -SpawnOut $spawnOut -ExitCode $LASTEXITCODE -TabTitle $tabTitle
+      $argv = Get-AgentLaunchArgv -Exe $script:Grok -ExeArgs $fullArgs -AgentLabel 'Grok' -Project $proj
+      [void](Invoke-WezCliSpawn -Cwd $Cwd -Argv $argv -TabTitle $tabTitle)
       Write-Host ("  OK: {0}" -f $Title) -ForegroundColor Green
       Write-Host ("  --cwd {0}" -f $Cwd) -ForegroundColor DarkGray
-      Start-Sleep -Milliseconds 200  # D-012: Init closes right after — settle only, no read time
       return $true
     } catch {}
   }
@@ -1910,17 +1923,12 @@ function Start-KimiTab {
   $fullArgs = @(); if ($KimiArgs) { $fullArgs += $KimiArgs }
   if ($script:Wez -and (Test-WezAlive)) {
     $proj = Split-Path -Leaf $Cwd
-    $spawn = @('cli', 'spawn')
-    $spawn += @('--cwd', $Cwd)
-    $spawn += '--'
-    $spawn += Get-AgentSplashSpawn -Exe $exe -ExeArgs $fullArgs -AgentLabel 'Kimi' -Project $proj
+    $tabTitle = '{0} | Kimi' -f $proj
     try {
-      $spawnOut = & $script:Wez @spawn 2>$null | Out-String
-      $tabTitle = '{0} | Kimi' -f $proj
-      Set-SpawnedTabTitle -SpawnOut $spawnOut -ExitCode $LASTEXITCODE -TabTitle $tabTitle
+      $argv = Get-AgentLaunchArgv -Exe $exe -ExeArgs $fullArgs -AgentLabel 'Kimi' -Project $proj
+      [void](Invoke-WezCliSpawn -Cwd $Cwd -Argv $argv -TabTitle $tabTitle)
       Write-Host ("  OK: {0}" -f $Title) -ForegroundColor Green
       Write-Host ("  cwd {0}" -f $Cwd) -ForegroundColor DarkGray
-      Start-Sleep -Milliseconds 200  # D-012: Init closes right after — settle only
       return $true
     } catch {}
   }
@@ -1979,21 +1987,18 @@ function Start-CodexTab {
   if ($script:Wez -and (Test-WezAlive)) {
     $proj = Split-Path -Leaf $Cwd
     $tabTitle = '{0} | Codex' -f $proj
-    if ($isShim) {
-      # Host wrap: keep shell open (-NoExit) so CLI errors stay visible
-      $argStr = ($fullArgs | ForEach-Object { "'" + ([string]$_).Replace("'", "''") + "'" }) -join ' '
-      $invoke = [System.IO.Path]::GetFileNameWithoutExtension($exe)
-      $psCmd = (Get-AgentSplashScript -AgentLabel 'Codex' -Project $proj) + "`r`n& $invoke $argStr"
-      $spawn = @('cli', 'spawn', '--cwd', $Cwd, '--', 'powershell.exe', '-NoLogo', '-NoExit', '-Command', $psCmd)
-    } else {
-      $spawn = @('cli', 'spawn', '--cwd', $Cwd, '--') + (Get-AgentSplashSpawn -Exe $exe -ExeArgs $fullArgs -AgentLabel 'Codex' -Project $proj)
-    }
     try {
-      $spawnOut = & $script:Wez @spawn 2>$null | Out-String
-      Set-SpawnedTabTitle -SpawnOut $spawnOut -ExitCode $LASTEXITCODE -TabTitle $tabTitle
+      if ($isShim) {
+        $argStr = ($fullArgs | ForEach-Object { "'" + ([string]$_).Replace("'", "''") + "'" }) -join ' '
+        $invoke = [System.IO.Path]::GetFileNameWithoutExtension($exe)
+        $psCmd = (Get-AgentSplashScript -AgentLabel 'Codex' -Project $proj) + "`r`n& $invoke $argStr"
+        [void](Invoke-WezCliSpawn -Cwd $Cwd -Argv @('powershell.exe', '-NoLogo', '-NoProfile', '-NoExit', '-Command', $psCmd) -TabTitle $tabTitle)
+      } else {
+        $argv = Get-AgentLaunchArgv -Exe $exe -ExeArgs $fullArgs -AgentLabel 'Codex' -Project $proj
+        [void](Invoke-WezCliSpawn -Cwd $Cwd -Argv $argv -TabTitle $tabTitle)
+      }
       Write-Host ("  OK: {0}" -f $Title) -ForegroundColor Green
       Write-Host ("  -C {0}" -f $Cwd) -ForegroundColor DarkGray
-      Start-Sleep -Milliseconds 200  # D-012: Init closes right after — settle only
       return $true
     } catch {}
   }
@@ -2039,15 +2044,12 @@ function Start-DeepSeekTab {
     $proj = Split-Path -Leaf $Cwd
     $argStr = ($fullArgs | ForEach-Object { "'" + ([string]$_).Replace("'", "''") + "'" }) -join ' '
     $invoke = [System.IO.Path]::GetFileNameWithoutExtension($exe)
-    $psCmd = (Get-AgentSplashScript -AgentLabel 'DeepSeek' -Project $proj) + "`r`n& $invoke $argStr"
-    $spawn = @('cli', 'spawn', '--cwd', $Cwd, '--', 'powershell.exe', '-NoLogo', '-NoExit', '-Command', $psCmd)
+    $psCmd = (Get-AgentSplashScript -AgentLabel 'DeepSeek' -Project $proj) + "`r`ntry { [Console]::Clear() } catch {}`r`n& $invoke $argStr"
+    $tabTitle = '{0} | DeepSeek' -f $proj
     try {
-      $spawnOut = & $script:Wez @spawn 2>$null | Out-String
-      $tabTitle = '{0} | DeepSeek' -f $proj
-      Set-SpawnedTabTitle -SpawnOut $spawnOut -ExitCode $LASTEXITCODE -TabTitle $tabTitle
+      [void](Invoke-WezCliSpawn -Cwd $Cwd -Argv @('powershell.exe', '-NoLogo', '-NoProfile', '-NoExit', '-Command', $psCmd) -TabTitle $tabTitle)
       Write-Host ("  OK: {0}" -f $Title) -ForegroundColor Green
       Write-Host ("  cwd {0}" -f $Cwd) -ForegroundColor DarkGray
-      Start-Sleep -Milliseconds 200  # D-012: Init closes right after — settle only
       return $true
     } catch {}
   }
@@ -2062,7 +2064,24 @@ function Get-AgentDefinitions {
   if ($null -ne $script:AgentDefinitions) { return @($script:AgentDefinitions) }
   $out = @()
   if (Test-Path -LiteralPath $script:AgentDiscoveryFile -PathType Leaf) {
-    try { $out = @(& $script:AgentDiscoveryFile -WorkbenchDir $PSScriptRoot) } catch {}
+    # 2026-08-19 incident: an ARRAY-SPLAT here (@('-WorkbenchDir', $root)) made
+    # PS 5.1 bind positionally — WorkbenchDir got the literal "-WorkbenchDir"
+    # and the real path landed in UserPathOverride, replacing PATH with the
+    # workbench dir → every discovery source died → zero agents, silently.
+    # INLINE named arguments only. Do not reintroduce splatting on this call.
+    try {
+      if ($script:WzForceDiscovery) {
+        $script:WzForceDiscovery = $false
+        $out = @(& $script:AgentDiscoveryFile -WorkbenchDir $PSScriptRoot -Refresh)
+      } else {
+        $out = @(& $script:AgentDiscoveryFile -WorkbenchDir $PSScriptRoot)
+      }
+    } catch {
+      try {
+        $logLine = ('{0:u} discovery threw: [{1}] {2} | expr: {3} | dotnet-stack: {4}' -f (Get-Date), $_.Exception.GetType().FullName, $_.Exception.Message, ($_.InvocationInfo.Line -replace "`r?`n", ' '), ($_.Exception.StackTrace -replace "`r?`n", ' <= '))
+        Add-Content -LiteralPath (Join-Path $PSScriptRoot 'discovery-debug.log') -Value $logLine -Encoding UTF8
+      } catch {}
+    }
   }
   $script:AgentDefinitions = @($out | Where-Object { $_.Id -and $_.Exe } | Sort-Object Label, Id)
   return @($script:AgentDefinitions)
@@ -2093,6 +2112,7 @@ function Reset-AgentDiscoveryCache {
   $script:AgentDefinitions = $null
   $script:AgentPeers = $null
   $script:CodexRuntimeVersions = @{}
+  $script:WzForceDiscovery = $true
 }
 
 function Invoke-AgentLaunch {
@@ -2600,6 +2620,7 @@ Write-Host '  CLI ended. Window kept open - close tab when done.' -ForegroundCol
         '--',
         'powershell.exe',
         '-NoLogo',
+        '-NoProfile',
         '-NoExit',
         '-ExecutionPolicy', 'Bypass',
         '-Command', $psCommand

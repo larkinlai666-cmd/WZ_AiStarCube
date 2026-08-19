@@ -7,5 +7,5 @@ Invoke-Expression $m.Value
 $fakeExe = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
 $argv = Get-AgentSplashSpawn -Exe $fakeExe -ExeArgs @('-NoLogo','-Command',"Write-Host 'AGENT-STARTED'") -AgentLabel 'Grok' -Project 'Proj X'
 Write-Host '===== generated -Command payload ====='
-Write-Host $argv[3]
+Write-Host $argv[-1]
 Write-Host '======================================'

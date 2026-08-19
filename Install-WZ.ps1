@@ -117,6 +117,12 @@ function Resolve-WezExe {
   if ($env:ProgramFiles) { $candidates += (Join-Path $env:ProgramFiles "WezTerm\wezterm.exe") }
   $pf86 = ${env:ProgramFiles(x86)}
   if ($pf86) { $candidates += (Join-Path $pf86 "WezTerm\wezterm.exe") }
+  # Stripped environments (CI / automation shells) may drop ProgramFiles from
+  # the process env; known-folder lookup survives that.
+  try {
+    $kf = [Environment]::GetFolderPath('ProgramFiles')
+    if ($kf) { $candidates += (Join-Path $kf "WezTerm\wezterm.exe") }
+  } catch {}
   $wezCmd = Get-Command wezterm -ErrorAction SilentlyContinue
   if ($wezCmd) { $candidates += $wezCmd.Source }
   foreach ($c in $candidates) {

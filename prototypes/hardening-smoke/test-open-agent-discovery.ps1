@@ -109,6 +109,30 @@ try {
   $updatedJson = & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $discoveryPath -WorkbenchDir $workbench -AsJson -UserPathOverride $persistedBin
   Assert-Wz ($LASTEXITCODE -eq 0 -and (($updatedJson -join '') -match 'nebula')) 'updated standalone CLI invalidates and refreshes its cached verdict'
   Assert-Wz (@(Get-ChildItem -LiteralPath (Split-Path -Parent $cachePath) -Filter '*.tmp' -File -ErrorAction SilentlyContinue).Count -eq 0) 'atomic cache replacement leaves no temporary file'
+  Assert-Wz (@(Get-ChildItem -LiteralPath (Split-Path -Parent $cachePath) -Filter '*.swap.*' -File -ErrorAction SilentlyContinue).Count -eq 0) 'atomic cache replacement leaves no swap backup'
+  $cacheAfterUpdate = Get-Content -LiteralPath $cachePath -Raw -Encoding UTF8
+  Assert-Wz ($cacheAfterUpdate -match [string]$updatedFixture.Length) 'existing fingerprint cache is actually replaced after a CLI update'
+  Assert-Wz ($cacheAfterUpdate -match '"lastWriteUtcTicks"\s*:\s*"') 'fingerprint ticks are stored as strings so PS 5.1 JSON cannot round them'
+
+  # A 9MB dedicated CLI with the capability phrase only at EOF must still be
+  # listed: Init cannot afford to read the whole self-contained binary.
+  $hugeApp = Join-Path $testRoot 'orbit-code'
+  $hugeBin = Join-Path $hugeApp 'bin'
+  New-Item -ItemType Directory -Force -Path $hugeBin | Out-Null
+  $hugeExe = Join-Path $hugeBin 'orbit.exe'
+  $hugeBytes = New-Object byte[] (9MB)
+  $hugeBytes[0] = 0x4D; $hugeBytes[1] = 0x5A
+  $hugeMarker = [System.Text.Encoding]::ASCII.GetBytes('an interactive coding agent for local projects')
+  [Array]::Copy($hugeMarker, 0, $hugeBytes, $hugeBytes.Length - $hugeMarker.Length - 1, $hugeMarker.Length)
+  [System.IO.File]::WriteAllBytes($hugeExe, $hugeBytes)
+  $hugeSw = [System.Diagnostics.Stopwatch]::StartNew()
+  $hugeJson = & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $discoveryPath -WorkbenchDir $workbench -AsJson -UserPathOverride $hugeBin
+  $hugeSw.Stop()
+  Assert-Wz ($LASTEXITCODE -eq 0) 'oversized dedicated CLI discovery exits cleanly'
+  $hugeRows = @()
+  foreach ($item in (ConvertFrom-Json -InputObject ($hugeJson -join [Environment]::NewLine))) { $hugeRows += $item }
+  Assert-Wz ((@($hugeRows | Where-Object { $_.Id -eq 'orbit' })).Count -eq 1) 'oversized dedicated user-bin CLI is accepted without a full-file scan'
+  Assert-Wz ($hugeSw.ElapsedMilliseconds -lt 8000) 'oversized dedicated CLI does not block Init on a full binary read'
 
   # A truly empty environment must stay empty; no historical product is injected.
   $emptyRoot = Join-Path $testRoot 'empty'
