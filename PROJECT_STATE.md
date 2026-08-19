@@ -14,8 +14,8 @@
 - Capsule: CONTEXT.md
 - Coverage: CONTEXT.md
 - Blockers: none
-- Next: User: restart WezTerm (Init five agents), then approve push — remote idle at 1d6e252, fast-forward only, zero conflict. Incident report: docs/agent-incident-review.md. Optional pending: verify-gate.ps1 / pre-commit hook.
-- Updated: 2026-08-19T16:12:00Z
+- Next: User: restart WezTerm (Init five agents + 1-frame cat); approve checklist (P-006 → D); optional gates (verify-gate / pre-commit / handoff protocol) pending approval. Pushed d606ae7, clean fast-forward.
+- Updated: 2026-08-19T16:25:00Z
 - Device: SK-20240507HWFH
 
 ## Objective

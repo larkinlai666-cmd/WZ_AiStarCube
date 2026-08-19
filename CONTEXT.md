@@ -76,4 +76,4 @@
 | D-017 | Windows-only 四原则蒸馏 + 真实读取进度/不定启动动画 + 对抗回归 + `_win` 发布边界 | Present |
 
 ## Next Action
-归零事故两层修复 + 红线七条 + e2e 断言落地，六套回归全绿；报告 docs/agent-incident-review.md。User: ① 重启 WezTerm 终验五家等权；② 批准推送（远端静止，纯快进零冲突）；③ 可选：verify-gate 单入口/pre-commit 钩子等建议项待批。
+全部未提交内容已推送（d606ae7，纯快进零冲突）；演进报告 docs/workbench-evolution-report.md。User: 重启 WezTerm 终验五家等权 + 1 帧猫；批准验收清单（P-006 → D）；可选项 verify-gate/pre-commit/接力协议待批。
