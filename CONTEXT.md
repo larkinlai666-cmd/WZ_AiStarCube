@@ -76,4 +76,4 @@
 | D-017 | Windows-only 四原则蒸馏 + 真实读取进度/不定启动动画 + 对抗回归 + `_win` 发布边界 | Present |
 
 ## Next Action
-User: 重启 WezTerm 按 F8，确认 JOURNAL 有新记录、页签 WZ_Repair|所选 Agent；报错 toast 应提到 F8。
+Pushed 1e2774b (F8 repair pod). User: 重启 WezTerm 验 F8 页签与 JOURNAL。P-006 待批。pps-application-review.md 未纳入本次提交。
